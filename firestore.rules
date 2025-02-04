@@ -1,0 +1,83 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+    
+    function isValidUsername(username) {
+      // Username must be:
+      // - 3-30 characters long
+      // - Only alphanumeric characters
+      // - Lowercase
+      return username.matches('^[a-z0-9]{3,30}$');
+    }
+    
+    // Usernames collection - ensures uniqueness
+    match /usernames/{username} {
+      allow read: if true;  // Anyone can check if a username exists
+      allow create: if isSignedIn() 
+        && isValidUsername(username)
+        && request.resource.data.userId == request.auth.uid
+        // Ensure this is the only username for this user
+        && !exists(/databases/$(database)/documents/usernames/$(username));
+      allow delete: if isSignedIn()
+        && resource.data.userId == request.auth.uid;
+      allow update: if false;  // Usernames cannot be updated, only created/deleted
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      allow read: if isSignedIn() && (isOwner(userId) || resource.data.isPublic == true);
+      allow create: if isSignedIn() && isOwner(userId)
+        && isValidUsername(request.resource.data.username);
+      allow update: if isOwner(userId)
+        && (
+          // If username is being changed, ensure it's valid
+          !("username" in request.resource.data.diff(resource.data).affectedKeys())
+          || isValidUsername(request.resource.data.username)
+        );
+      allow delete: if isOwner(userId);
+    }
+    
+    // Videos collection
+    match /videos/{videoId} {
+      allow read: if true; // Anyone can view videos
+      allow create: if isSignedIn() 
+        && request.resource.data.userId == request.auth.uid
+        // Ensure the user exists and owns this username
+        && exists(/databases/$(database)/documents/usernames/$(request.resource.data.username))
+        && get(/databases/$(database)/documents/usernames/$(request.resource.data.username)).data.userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      
+      // Comments subcollection
+      match /comments/{commentId} {
+        allow read: if true;
+        allow create: if isSignedIn() 
+          && request.resource.data.authorId == request.auth.uid
+          // Ensure comment author username is valid
+          && exists(/databases/$(database)/documents/usernames/$(request.resource.data.authorUsername))
+          && get(/databases/$(database)/documents/usernames/$(request.resource.data.authorUsername)).data.userId == request.auth.uid;
+        allow update, delete: if isSignedIn() && resource.data.authorId == request.auth.uid;
+      }
+      
+      // Likes subcollection - simple document per like
+      match /likes/{userId} {
+        allow read: if true;
+        allow create, delete: if isSignedIn() && userId == request.auth.uid;
+        allow update: if false; // Likes are create/delete only
+      }
+    }
+    
+    // Default: deny all other access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+} 
