@@ -26,12 +26,12 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 @main
 struct ReelAIApp: App {
     // MARK: - Properties
-    
+
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
     @StateObject private var authService = AuthenticationService()
-    
+
     // MARK: - Body
-    
+
     var body: some Scene {
         WindowGroup {
             Group {
@@ -50,3 +50,4 @@ struct ReelAIApp: App {
         }
     }
 }
+

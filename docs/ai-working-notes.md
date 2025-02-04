@@ -1,8 +1,9 @@
 dependencies (visible in ReelAI.xcodeproj/project.pbxproj):
 - FirebaseAnalytics
-- FirebaseAuthCombine-Community
+- FirebaseAuthCombine-Community (FirebaseAuthCombineSwift)
 - FirebaseCore
 - FirebaseCrashlytics
+- FirebaseFirestoreCombine-Community (FirebaseFirestoreCombineSwift)
 
 Recent Changes (2024-02-03):
 1. Cleaned up repository:

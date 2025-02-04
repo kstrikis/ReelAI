@@ -1,25 +1,13 @@
 import SwiftUI
 
-/// Custom style for text fields
-struct RoundedTextFieldStyle: TextFieldStyle {
-    func _body(configuration: TextField<Self._Label>) -> some View {
-        configuration
-            .padding()
-            .background(Color.white)
-            .cornerRadius(12)
-            .shadow(radius: 3)
-    }
-}
-
 /// Primary button style
 struct PrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
+            .frame(maxWidth: .infinity, minHeight: 50)
             .background(Color.blue)
             .foregroundColor(.white)
-            .cornerRadius(12)
+            .cornerRadius(10)
             .shadow(radius: 3)
             .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
@@ -29,15 +17,30 @@ struct PrimaryButtonStyle: ButtonStyle {
 struct SecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .frame(maxWidth: .infinity)
-            .frame(height: 50)
-            .background(Color.white.opacity(0.2))
+            .frame(maxWidth: .infinity, minHeight: 50)
+            .background(Color.clear)
             .foregroundColor(.white)
-            .cornerRadius(12)
+            .cornerRadius(10)
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 10)
                     .stroke(Color.white, lineWidth: 1)
             )
-            .opacity(configuration.isPressed ? 0.6 : 1.0)
+            .opacity(configuration.isPressed ? 0.8 : 1.0)
     }
-} 
+}
+
+#if DEBUG
+struct Styles_Previews: PreviewProvider {
+    static var previews: some View {
+        VStack(spacing: 20) {
+            Button("Primary Button") {}
+                .buttonStyle(PrimaryButtonStyle())
+
+            Button("Secondary Button") {}
+                .buttonStyle(SecondaryButtonStyle())
+        }
+        .padding()
+        .background(Color.black)
+    }
+}
+#endif

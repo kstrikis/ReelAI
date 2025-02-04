@@ -6,25 +6,26 @@ import Foundation
 /// categorized logging across the application.
 struct AppLogger {
     // MARK: - Properties
-    
+
     static let subsystem = Bundle.main.bundleIdentifier ?? "com.kstrikis.ReelAI"
-    
+
     // MARK: - Category Loggers
-    
+
     /// Logger for authentication-related events
     static let auth = Logger(subsystem: subsystem, category: "auth")
-    
+
     /// Logger for user interface events
+    // swiftlint:disable:next identifier_name
     static let ui = Logger(subsystem: subsystem, category: "ui")
-    
+
     /// Logger for network operations
     static let network = Logger(subsystem: subsystem, category: "network")
-    
+
     /// Logger for data operations
     static let data = Logger(subsystem: subsystem, category: "data")
-    
+
     // MARK: - Convenience Methods
-    
+
     /// Logs method entry with parameters (if any)
     /// - Parameters:
     ///   - logger: The logger to use
@@ -36,12 +37,15 @@ struct AppLogger {
         params: [String: Any]? = nil
     ) {
         if let params = params {
-            logger.debug("➡️ Entering \(method, privacy: .public) with params: \(String(describing: params), privacy: .private)")
+            logger.debug("""
+                ➡️ Entering \(method, privacy: .public) with params: \
+                \(String(describing: params), privacy: .private)
+                """)
         } else {
             logger.debug("➡️ Entering \(method, privacy: .public)")
         }
     }
-    
+
     /// Logs method exit with result (if any)
     /// - Parameters:
     ///   - logger: The logger to use
@@ -53,12 +57,15 @@ struct AppLogger {
         result: Any? = nil
     ) {
         if let result = result {
-            logger.debug("⬅️ Exiting \(method, privacy: .public) with result: \(String(describing: result), privacy: .private)")
+            logger.debug("""
+                ⬅️ Exiting \(method, privacy: .public) with result: \
+                \(String(describing: result), privacy: .private)
+                """)
         } else {
             logger.debug("⬅️ Exiting \(method, privacy: .public)")
         }
     }
-    
+
     /// Logs an error with additional context
     /// - Parameters:
     ///   - logger: The logger to use
@@ -74,6 +81,24 @@ struct AppLogger {
         } else {
             logger.error("❌ Error: \(error.localizedDescription, privacy: .public)")
         }
+    }
+
+    func methodEntry(
+        _ message: String,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        AppLogger.debug("\(message)")
+    }
+
+    func methodExit(
+        _ message: String,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        AppLogger.debug("\(message)")
     }
 }
 
@@ -92,4 +117,4 @@ extension AppLogger {
         logger.debug("📝 \(fileName):\(line) - \(message, privacy: .public)")
     }
 }
-#endif 
+#endif

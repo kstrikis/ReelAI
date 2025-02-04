@@ -1,3 +1,4 @@
+```markdown
 # ReelAI iOS Development Checklist
 
 ### **Phase 1: Firebase Auth & Session Management**  
