@@ -19,8 +19,8 @@ final class CameraManager: NSObject, @unchecked Sendable {
     private let captureSession = AVCaptureSession()
     private var deviceInput: AVCaptureDeviceInput?
     private var videoOutput: AVCaptureVideoDataOutput?
-    private let systemPreferredCamera = AVCaptureDevice.default(for: .video)
     private var sessionQueue = DispatchQueue(label: "video.preview.session")
+    private var isFrontCameraActive = true
     
     private var addToPreviewStream: ((CGImage) -> Void)?
     
@@ -84,6 +84,23 @@ final class CameraManager: NSObject, @unchecked Sendable {
         await startSession()
     }
     
+    func switchCamera() async {
+        print("📸 Switching camera")
+        isFrontCameraActive.toggle()
+        await configureSession()
+        await startSession()
+    }
+    
+    private func getCurrentCamera() -> AVCaptureDevice? {
+        let deviceTypes: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera]
+        let discoverySession = AVCaptureDevice.DiscoverySession(
+            deviceTypes: deviceTypes,
+            mediaType: .video,
+            position: isFrontCameraActive ? .front : .back
+        )
+        return discoverySession.devices.first
+    }
+    
     private func configureSession() async {
         AppLogger.methodEntry(AppLogger.ui)
         print("📸 Configuring camera session...")
@@ -93,14 +110,17 @@ final class CameraManager: NSObject, @unchecked Sendable {
             return
         }
         
-        guard let systemPreferredCamera else {
+        // Stop previous session if running
+        stopSession()
+        
+        guard let camera = getCurrentCamera() else {
             print("❌ No camera device available")
             AppLogger.error(AppLogger.ui, CameraError.deviceNotAvailable)
             return
         }
         
         do {
-            let deviceInput = try AVCaptureDeviceInput(device: systemPreferredCamera)
+            let deviceInput = try AVCaptureDeviceInput(device: camera)
             print("📸 Created device input")
             
             captureSession.beginConfiguration()
@@ -108,6 +128,10 @@ final class CameraManager: NSObject, @unchecked Sendable {
                 captureSession.commitConfiguration()
                 print("📸 Committed session configuration")
             }
+            
+            // Remove previous inputs and outputs
+            captureSession.inputs.forEach { captureSession.removeInput($0) }
+            captureSession.outputs.forEach { captureSession.removeOutput($0) }
             
             let videoOutput = AVCaptureVideoDataOutput()
             videoOutput.setSampleBufferDelegate(self, queue: sessionQueue)
@@ -127,6 +151,16 @@ final class CameraManager: NSObject, @unchecked Sendable {
             
             captureSession.addInput(deviceInput)
             captureSession.addOutput(videoOutput)
+            
+            // Configure video connection
+            if let connection = videoOutput.connection(with: .video) {
+                if connection.isVideoMirroringSupported {
+                    connection.isVideoMirrored = isFrontCameraActive
+                }
+                // Set rotation to portrait (0 degrees)
+                connection.videoRotationAngle = 90
+            }
+            
             self.videoOutput = videoOutput
             print("📸 Successfully added input and output to session")
             

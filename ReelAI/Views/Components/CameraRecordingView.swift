@@ -67,6 +67,22 @@ struct CameraRecordingView: View {
                 
                 // Controls overlay
                 VStack {
+                    // Top controls
+                    HStack {
+                        Spacer()
+                        Button(action: {
+                            Task {
+                                await CameraManager.shared.switchCamera()
+                            }
+                        }) {
+                            Image(systemName: "camera.rotate")
+                                .font(.system(size: 24))
+                                .foregroundColor(.white)
+                                .padding()
+                        }
+                    }
+                    .padding(.top, 10)
+                    
                     Spacer()
                     
                     // Bottom controls
