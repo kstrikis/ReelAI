@@ -1,5 +1,5 @@
-import os
 import Foundation
+import os
 
 /// AppLogger provides a unified logging interface for the ReelAI app.
 /// It wraps Apple's unified logging system (os.Logger) to provide consistent,
@@ -14,6 +14,7 @@ struct AppLogger {
     /// Logger for authentication-related events
     static let auth = Logger(subsystem: subsystem, category: "auth")
 
+    // swiftlint:disable:next orphaned_doc_comment
     /// Logger for user interface events
     // swiftlint:disable:next identifier_name
     static let ui = Logger(subsystem: subsystem, category: "ui")
@@ -36,11 +37,11 @@ struct AppLogger {
         _ method: String = #function,
         params: [String: Any]? = nil
     ) {
-        if let params = params {
+        if let params {
             logger.debug("""
-                ➡️ Entering \(method, privacy: .public) with params: \
-                \(String(describing: params), privacy: .private)
-                """)
+            ➡️ Entering \(method, privacy: .public) with params: \
+            \(String(describing: params), privacy: .private)
+            """)
         } else {
             logger.debug("➡️ Entering \(method, privacy: .public)")
         }
@@ -56,11 +57,11 @@ struct AppLogger {
         _ method: String = #function,
         result: Any? = nil
     ) {
-        if let result = result {
+        if let result {
             logger.debug("""
-                ⬅️ Exiting \(method, privacy: .public) with result: \
-                \(String(describing: result), privacy: .private)
-                """)
+            ⬅️ Exiting \(method, privacy: .public) with result: \
+            \(String(describing: result), privacy: .private)
+            """)
         } else {
             logger.debug("⬅️ Exiting \(method, privacy: .public)")
         }
@@ -76,13 +77,19 @@ struct AppLogger {
         _ error: Error,
         context: String? = nil
     ) {
-        if let context = context {
+        if let context {
             logger.error("❌ Error in \(context, privacy: .public): \(error.localizedDescription, privacy: .public)")
         } else {
             logger.error("❌ Error: \(error.localizedDescription, privacy: .public)")
         }
     }
 
+    /// Logs method entry with a message and source information
+    /// - Parameters:
+    ///   - message: The message to log
+    ///   - file: Source file name (automatically provided)
+    ///   - function: Function name (automatically provided)
+    ///   - line: Line number (automatically provided)
     func methodEntry(
         _ message: String,
         file: String = #file,
@@ -92,6 +99,12 @@ struct AppLogger {
         AppLogger.debug("\(message)")
     }
 
+    /// Logs method exit with a message and source information
+    /// - Parameters:
+    ///   - message: The message to log
+    ///   - file: Source file name (automatically provided)
+    ///   - function: Function name (automatically provided)
+    ///   - line: Line number (automatically provided)
     func methodExit(
         _ message: String,
         file: String = #file,
@@ -105,16 +118,16 @@ struct AppLogger {
 // MARK: - Debug Convenience Extensions
 
 #if DEBUG
-extension AppLogger {
-    /// Logs a debug message with the file and line number
-    static func debug(
-        _ message: String,
-        file: String = #file,
-        line: Int = #line
-    ) {
-        let fileName = (file as NSString).lastPathComponent
-        let logger = Logger(subsystem: subsystem, category: "debug")
-        logger.debug("📝 \(fileName):\(line) - \(message, privacy: .public)")
+    extension AppLogger {
+        /// Logs a debug message with the file and line number
+        static func debug(
+            _ message: String,
+            file: String = #file,
+            line: Int = #line
+        ) {
+            let fileName = (file as NSString).lastPathComponent
+            let logger = Logger(subsystem: subsystem, category: "debug")
+            logger.debug("📝 \(fileName):\(line) - \(message, privacy: .public)")
+        }
     }
-}
 #endif

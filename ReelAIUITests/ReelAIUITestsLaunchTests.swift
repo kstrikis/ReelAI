@@ -8,7 +8,6 @@
 import XCTest
 
 final class ReelAIUITestsLaunchTests: XCTestCase {
-
     override static var runsForEachTargetApplicationUIConfiguration: Bool {
         true
     }

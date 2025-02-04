@@ -1,5 +1,5 @@
-import SwiftUI
 import Combine
+import SwiftUI
 
 /// LoginView provides the main authentication interface for users
 struct LoginView: View {
@@ -66,43 +66,38 @@ struct LoginView: View {
                 .padding(.horizontal)
 
                 // Error message
-                if let errorMessage = errorMessage {
+                if let errorMessage {
                     Text(errorMessage)
                         .foregroundColor(.red)
                         .font(.caption)
                 }
 
-                // Login button
-                Button(action: signIn) {
+                // Sign In Button
+                Button(action: signIn, label: {
                     if isLoading {
                         ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                            .tint(.white)
                     } else {
                         Text("Sign In")
                             .fontWeight(.semibold)
                     }
-                }
+                })
                 .buttonStyle(PrimaryButtonStyle())
                 .disabled(isLoading || !isValidInput)
 
-                // Demo login button
-                Button(action: signInAsDemo) {
-                    if isLoading {
-                        ProgressView()
-                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                    } else {
-                        Text("Try Demo")
-                            .fontWeight(.medium)
-                    }
-                }
+                // Demo Login Button
+                Button(action: signInAsDemo, label: {
+                    Text("Demo Login")
+                        .fontWeight(.semibold)
+                })
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(isLoading)
 
-                // Sign up button
-                Button(action: signUp) {
-                    Text("Create Account")
-                        .fontWeight(.medium)
-                }
+                // Sign Up Button
+                Button(action: signUp, label: {
+                    Text("Don't have an account? Sign Up")
+                        .foregroundColor(.white)
+                })
                 .buttonStyle(SecondaryButtonStyle())
                 .disabled(isLoading)
 
@@ -135,7 +130,7 @@ struct LoginView: View {
             .sink(
                 receiveCompletion: { completion in
                     isLoading = false
-                    if case .failure(let error) = completion {
+                    if case let .failure(error) = completion {
                         errorMessage = error.localizedDescription
                     }
                 },
@@ -155,7 +150,7 @@ struct LoginView: View {
             .sink(
                 receiveCompletion: { completion in
                     isLoading = false
-                    if case .failure(let error) = completion {
+                    if case let .failure(error) = completion {
                         errorMessage = error.localizedDescription
                     }
                 },
@@ -198,10 +193,10 @@ extension Cancellable {
 // MARK: - Preview
 
 #if DEBUG
-struct LoginView_Previews: PreviewProvider {
-    static var previews: some View {
-        LoginView()
-            .environmentObject(AuthenticationService.preview)
+    struct LoginView_Previews: PreviewProvider {
+        static var previews: some View {
+            LoginView()
+                .environmentObject(AuthenticationService.preview)
+        }
     }
-}
 #endif

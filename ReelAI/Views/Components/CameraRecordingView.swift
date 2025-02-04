@@ -1,19 +1,20 @@
-import SwiftUI
 import AVFoundation
+import SwiftUI
 
 // MARK: - Camera Errors
+
 enum CameraError: LocalizedError {
     case deviceNotAvailable
     case setupFailed(Error)
     case outputNotAvailable
     case recordingFailed(Error)
-    
+
     var errorDescription: String? {
         switch self {
-            case .deviceNotAvailable: return "Failed to get video device"
-            case .setupFailed(let error): return "Failed to setup camera session: \(error.localizedDescription)"
-            case .outputNotAvailable: return "Video output not available"
-            case .recordingFailed(let error): return "Recording failed: \(error.localizedDescription)"
+        case .deviceNotAvailable: "Failed to get video device"
+        case let .setupFailed(error): "Failed to setup camera session: \(error.localizedDescription)"
+        case .outputNotAvailable: "Video output not available"
+        case let .recordingFailed(error): "Recording failed: \(error.localizedDescription)"
         }
     }
 }
@@ -22,12 +23,12 @@ enum CameraError: LocalizedError {
 final class CameraViewModel {
     var currentFrame: CGImage?
     private let cameraManager = CameraManager.shared
-    
+
     init() {
         AppLogger.methodEntry(AppLogger.ui)
         AppLogger.methodExit(AppLogger.ui)
     }
-    
+
     func handleCameraPreviews() async {
         AppLogger.methodEntry(AppLogger.ui)
         await cameraManager.prepareAndStart()
@@ -38,7 +39,7 @@ final class CameraViewModel {
         }
         AppLogger.methodExit(AppLogger.ui)
     }
-    
+
     func stopCamera() {
         AppLogger.methodEntry(AppLogger.ui)
         cameraManager.stopSession()
@@ -50,7 +51,7 @@ struct CameraRecordingView: View {
     let isActive: Bool
     @State private var viewModel = CameraViewModel()
     @State private var isRecording = false
-    
+
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -64,7 +65,7 @@ struct CameraRecordingView: View {
                 } else {
                     ContentUnavailableView("No camera feed", systemImage: "video.slash")
                 }
-                
+
                 // Controls overlay
                 VStack {
                     // Top controls
@@ -74,23 +75,23 @@ struct CameraRecordingView: View {
                             Task {
                                 await CameraManager.shared.switchCamera()
                             }
-                        }) {
+                        }, label: {
                             Image(systemName: "camera.rotate")
                                 .font(.system(size: 24))
                                 .foregroundColor(.white)
                                 .padding()
-                        }
+                        })
                     }
                     .padding(.top, 10)
-                    
+
                     Spacer()
-                    
+
                     // Bottom controls
                     HStack {
                         Spacer()
-                        
+
                         // Record button
-                        Button(action: toggleRecording) {
+                        Button(action: toggleRecording, label: {
                             Circle()
                                 .fill(isRecording ? Color.red : Color.white)
                                 .frame(width: 80, height: 80)
@@ -99,8 +100,8 @@ struct CameraRecordingView: View {
                                         .stroke(Color.white, lineWidth: 4)
                                         .frame(width: 70, height: 70)
                                 )
-                        }
-                        
+                        })
+
                         Spacer()
                     }
                     .padding(.bottom, 30)
@@ -108,7 +109,7 @@ struct CameraRecordingView: View {
             }
         }
         .ignoresSafeArea()
-        .onChange(of: isActive) { wasActive, isNowActive in
+        .onChange(of: isActive) { _, isNowActive in
             if isNowActive {
                 // Start camera when swiping to this view
                 Task {
@@ -120,7 +121,7 @@ struct CameraRecordingView: View {
             }
         }
     }
-    
+
     private func toggleRecording() {
         AppLogger.methodEntry(AppLogger.ui)
         withAnimation {
@@ -132,9 +133,9 @@ struct CameraRecordingView: View {
 }
 
 #if DEBUG
-struct CameraRecordingView_Previews: PreviewProvider {
-    static var previews: some View {
-        CameraRecordingView(isActive: true)
+    struct CameraRecordingView_Previews: PreviewProvider {
+        static var previews: some View {
+            CameraRecordingView(isActive: true)
+        }
     }
-}
-#endif 
+#endif

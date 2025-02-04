@@ -1,9 +1,9 @@
-import Foundation
+import Combine
 import FirebaseAuth
 import FirebaseAuthCombineSwift
 import FirebaseFirestore
 import FirebaseFirestoreCombineSwift
-import Combine
+import Foundation
 
 /// Represents the current authentication state of the user
 enum AuthState {
@@ -21,7 +21,13 @@ struct UserProfile: Codable {
     let profileImageUrl: String?
     let createdAt: Date
 
-    init(username: String, displayName: String, email: String?, profileImageUrl: String? = nil, createdAt: Date = Date()) {
+    init(
+        username: String,
+        displayName: String,
+        email: String?,
+        profileImageUrl: String? = nil,
+        createdAt: Date = Date()
+    ) {
         self.username = username
         self.displayName = displayName
         self.email = email
@@ -68,16 +74,16 @@ final class AuthenticationService: ObservableObject {
         Auth.auth().authStateDidChangePublisher()
             .receive(on: DispatchQueue.main)
             .sink { [weak self] (auth: User?) in
-                guard let self = self else { return }
+                guard let self else { return }
 
                 if let user = auth {
                     AppLogger.debug("👤 User signed in: \(user.uid)")
-                    self.authState = .signedIn(user)
-                    self.fetchUserProfile(userId: user.uid) // Fetch profile when signed in
+                    authState = .signedIn(user)
+                    fetchUserProfile(userId: user.uid) // Fetch profile when signed in
                 } else {
                     AppLogger.debug("👤 User signed out")
-                    self.authState = .signedOut
-                    self.userProfile = nil // Clear profile when signed out
+                    authState = .signedOut
+                    userProfile = nil // Clear profile when signed out
                 }
             }
             .store(in: &cancellables)
@@ -96,7 +102,7 @@ final class AuthenticationService: ObservableObject {
             .snapshotPublisher()
             .receive(on: DispatchQueue.main)
             .sink { completion in
-                if case .failure(let error) = completion {
+                if case let .failure(error) = completion {
                     AppLogger.error(AppLogger.auth, error, context: "Fetch user profile")
                 }
             } receiveValue: { [weak self] snapshot in
@@ -156,8 +162,8 @@ final class AuthenticationService: ObservableObject {
         AppLogger.methodEntry(AppLogger.auth, params: ["base": base])
 
         // Try up to 100 random numbers (very unlikely to need this many)
-        let attempts = (0..<100).map { _ in
-            let randomNum = Int.random(in: 1...9999)
+        let attempts = (0 ..< 100).map { _ in
+            let randomNum = Int.random(in: 1 ... 9999)
             let candidate = "\(base)\(randomNum)"
             return checkUsernameAvailability(candidate)
                 .map { isAvailable -> String? in
@@ -166,8 +172,8 @@ final class AuthenticationService: ObservableObject {
         }
 
         return Publishers.Sequence(sequence: attempts)
-            .flatMap { $0 }
-            .compactMap { $0 }
+            .flatMap(\.self)
+            .compactMap(\.self)
             .first()
             .mapError { $0 as Error }
             .eraseToAnyPublisher()
@@ -180,9 +186,12 @@ final class AuthenticationService: ObservableObject {
         AppLogger.methodEntry(AppLogger.auth, params: ["username": username])
 
         guard let userId = currentUser?.uid else {
-            return Fail(error: NSError(domain: "com.kstrikis.ReelAI", code: -1,
-                                     userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]))
-                .eraseToAnyPublisher()
+            return Fail(error: NSError(
+                domain: "com.kstrikis.ReelAI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
+            ))
+            .eraseToAnyPublisher()
         }
 
         return Future<Void, Error> { promise in
@@ -190,7 +199,7 @@ final class AuthenticationService: ObservableObject {
                 "userId": userId,
                 "createdAt": FieldValue.serverTimestamp()
             ]) { error in
-                if let error = error {
+                if let error {
                     AppLogger.error(AppLogger.auth, error, context: "Reserve username")
                     promise(.failure(error))
                 } else {
@@ -209,8 +218,11 @@ final class AuthenticationService: ObservableObject {
         AppLogger.methodEntry(AppLogger.auth)
 
         guard let userId = currentUser?.uid else {
-            let error = NSError(domain: "com.kstrikis.ReelAI", code: -1,
-                              userInfo: [NSLocalizedDescriptionKey: "No authenticated user"])
+            let error = NSError(
+                domain: "com.kstrikis.ReelAI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
+            )
             return Fail(error: error).eraseToAnyPublisher()
         }
 
@@ -220,7 +232,7 @@ final class AuthenticationService: ObservableObject {
                 Future<Void, Error> { promise in
                     do {
                         try self.database.collection("users").document(userId).setData(from: profile) { error in
-                            if let error = error {
+                            if let error {
                                 AppLogger.error(AppLogger.auth, error, context: "Update user profile")
                                 promise(.failure(error))
                             } else {
@@ -250,15 +262,18 @@ final class AuthenticationService: ObservableObject {
 
         return Future<User, Error> { promise in
             Auth.auth().signIn(withEmail: email, password: password) { result, error in
-                if let error = error {
+                if let error {
                     AppLogger.error(AppLogger.auth, error, context: "Sign in")
                     promise(.failure(error))
                     return
                 }
 
                 guard let user = result?.user else {
-                    let error = NSError(domain: "com.kstrikis.ReelAI", code: -1,
-                                      userInfo: [NSLocalizedDescriptionKey: "User not found after sign in"])
+                    let error = NSError(
+                        domain: "com.kstrikis.ReelAI",
+                        code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "User not found after sign in"]
+                    )
                     AppLogger.error(AppLogger.auth, error, context: "Sign in - missing user")
                     promise(.failure(error))
                     return
@@ -294,7 +309,7 @@ final class AuthenticationService: ObservableObject {
                 self?.updateProfile(profile)
                     .sink(
                         receiveCompletion: { completion in
-                            if case .failure(let error) = completion {
+                            if case let .failure(error) = completion {
                                 AppLogger.error(AppLogger.auth, error, context: "Demo sign in - create profile")
                             }
                         },
@@ -318,15 +333,18 @@ final class AuthenticationService: ObservableObject {
         // First create the auth account
         return Future<User, Error> { promise in
             Auth.auth().createUser(withEmail: email, password: password) { [weak self] result, error in
-                if let error = error {
+                if let error {
                     AppLogger.error(AppLogger.auth, error, context: "Sign up")
                     promise(.failure(error))
                     return
                 }
 
                 guard let user = result?.user else {
-                    let error = NSError(domain: "com.kstrikis.ReelAI", code: -1,
-                                      userInfo: [NSLocalizedDescriptionKey: "User not found after sign up"])
+                    let error = NSError(
+                        domain: "com.kstrikis.ReelAI",
+                        code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "User not found after sign up"]
+                    )
                     AppLogger.error(AppLogger.auth, error, context: "Sign up - missing user")
                     promise(.failure(error))
                     return
@@ -350,7 +368,7 @@ final class AuthenticationService: ObservableObject {
                     }
                     .sink(
                         receiveCompletion: { completion in
-                            if case .failure(let error) = completion {
+                            if case let .failure(error) = completion {
                                 AppLogger.error(AppLogger.auth, error, context: "Sign up - create profile")
                                 // Don't fail the signup if profile creation fails
                                 // The profile can be created later
@@ -385,12 +403,12 @@ final class AuthenticationService: ObservableObject {
 // MARK: - Preview Helper
 
 #if DEBUG
-extension AuthenticationService {
-    /// Creates a preview instance of AuthenticationService
-    static var preview: AuthenticationService {
-        let service = AuthenticationService()
-        // You can set up different auth states for previews here
-        return service
+    extension AuthenticationService {
+        /// Creates a preview instance of AuthenticationService
+        static var preview: AuthenticationService {
+            let service = AuthenticationService()
+            // You can set up different auth states for previews here
+            return service
+        }
     }
-}
 #endif

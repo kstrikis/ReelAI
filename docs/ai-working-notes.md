@@ -164,32 +164,31 @@ This approach meets our immediate need to demonstrate a meme video creation tool
 # AI Working Notes
 
 ## Latest Updates
-- Cleaned up ContentView.swift:
-  - Removed redundant outer ZStack
-  - Fixed sheet modifier placement
-  - Removed unused signOut function
-  - Simplified view hierarchy and modifiers
-- Fixed error handling in LoginView.swift:
-  - Removed redundant AuthError type casting
-  - Simplified error message display
-- Fixed AppLogger.ui references and added SwiftLint exception
+- Fixed camera orientation by setting videoRotationAngle to 90 degrees
+- Camera improvements:
+  - Using front camera by default
+  - Added camera flip button
+  - Proper camera lifecycle management with tab changes
+  - Fixed video orientation issues
 - Remaining tasks:
-  - Address force cast in LoginView.swift
-  - Fix multiple closures with trailing closure violations
-  - Resolve TODOs in SideMenuView.swift
-  - Add proper trailing newlines to files
+  - Address SwiftLint warnings in CameraManager.swift
+  - Implement video recording functionality
+  - Add proper error handling for camera permissions
+  - Add loading states for camera initialization
 
 ## Configuration Notes
 - Using SwiftUI for UI components
 - Firebase for authentication and data storage
 - SwiftLint for code quality enforcement
+- Camera restricted to portrait mode only
 
 ## Debugging Notes
-- NavigationView and toolbar styling requires careful modifier ordering
-- Error handling should be simplified where possible
-- View hierarchy should be kept minimal for better performance
+- Camera orientation needs to be set to 90 degrees for proper portrait display
+- Camera initialization should happen when view becomes active
+- Camera cleanup on view disappear is important for resource management
 
 ## Decisions
-- Keeping AppLogger.ui as short name with SwiftLint exception
-- Simplified error handling in authentication flows
-- Removed redundant view wrapping in ContentView
+- Using singleton pattern for CameraManager to prevent multiple instances
+- Keeping camera in portrait mode only
+- Front camera as default for better user experience
+- Tab-based navigation with proper view lifecycle management

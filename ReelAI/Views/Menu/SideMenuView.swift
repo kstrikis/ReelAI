@@ -49,7 +49,7 @@ struct SideMenuView: View {
                         VStack(spacing: 0) {
                             MenuButton(
                                 title: "Profile",
-                                icon: "person.circle",
+                                systemImage: "person.circle",
                                 action: {
                                     showProfile = true
                                 }
@@ -57,7 +57,7 @@ struct SideMenuView: View {
 
                             MenuButton(
                                 title: "About",
-                                icon: "info.circle",
+                                systemImage: "info.circle",
                                 action: {
                                     // TODO: Show about view
                                 }
@@ -65,7 +65,7 @@ struct SideMenuView: View {
 
                             MenuButton(
                                 title: "Settings",
-                                icon: "gear",
+                                systemImage: "gear",
                                 action: {
                                     // TODO: Show settings
                                 }
@@ -77,7 +77,7 @@ struct SideMenuView: View {
 
                             MenuButton(
                                 title: "Sign Out",
-                                icon: "rectangle.portrait.and.arrow.right",
+                                systemImage: "rectangle.portrait.and.arrow.right",
                                 action: {
                                     authService.signOut()
                                 }
@@ -100,31 +100,28 @@ struct SideMenuView: View {
 // Helper view for menu buttons
 private struct MenuButton: View {
     let title: String
-    let icon: String
+    let systemImage: String
     let action: () -> Void
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 16) {
-                Image(systemName: icon)
-                    .frame(width: 24, height: 24)
-
+        Button(action: action, label: {
+            HStack {
+                Image(systemName: systemImage)
+                    .frame(width: 24)
                 Text(title)
-
                 Spacer()
             }
-            .foregroundColor(.primary)
-            .padding(.horizontal)
+            .foregroundColor(.white)
             .padding(.vertical, 12)
-        }
+        })
     }
 }
 
 #if DEBUG
-struct SideMenuView_Previews: PreviewProvider {
-    static var previews: some View {
-        SideMenuView(isPresented: .constant(true))
-            .environmentObject(AuthenticationService.preview)
+    struct SideMenuView_Previews: PreviewProvider {
+        static var previews: some View {
+            SideMenuView(isPresented: .constant(true))
+                .environmentObject(AuthenticationService.preview)
+        }
     }
-}
 #endif

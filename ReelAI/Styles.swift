@@ -30,17 +30,17 @@ struct SecondaryButtonStyle: ButtonStyle {
 }
 
 #if DEBUG
-struct Styles_Previews: PreviewProvider {
-    static var previews: some View {
-        VStack(spacing: 20) {
-            Button("Primary Button") {}
-                .buttonStyle(PrimaryButtonStyle())
+    struct Styles_Previews: PreviewProvider {
+        static var previews: some View {
+            VStack(spacing: 20) {
+                Button("Primary Button") {}
+                    .buttonStyle(PrimaryButtonStyle())
 
-            Button("Secondary Button") {}
-                .buttonStyle(SecondaryButtonStyle())
+                Button("Secondary Button") {}
+                    .buttonStyle(SecondaryButtonStyle())
+            }
+            .padding()
+            .background(Color.black)
         }
-        .padding()
-        .background(Color.black)
     }
-}
 #endif

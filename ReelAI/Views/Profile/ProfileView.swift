@@ -44,13 +44,13 @@ struct ProfileView: View {
                                 autocapitalizeNone: true
                             )
 
-                            if let errorMessage = errorMessage {
+                            if let errorMessage {
                                 Text(errorMessage)
                                     .foregroundColor(.red)
                                     .font(.caption)
                             }
 
-                            Button(action: saveProfile) {
+                            Button(action: saveProfile, label: {
                                 if isLoading {
                                     ProgressView()
                                         .progressViewStyle(CircularProgressViewStyle(tint: .white))
@@ -58,7 +58,7 @@ struct ProfileView: View {
                                     Text("Save Changes")
                                         .fontWeight(.semibold)
                                 }
-                            }
+                            })
                             .buttonStyle(PrimaryButtonStyle())
                             .disabled(isLoading)
                         }
@@ -92,17 +92,17 @@ struct ProfileView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: { dismiss() }) {
-                    Image(systemName: "xmark")
-                        .foregroundColor(.white)
-                }
+                Button(action: { dismiss() }, label: {
+                    Text("Done")
+                        .foregroundColor(.blue)
+                })
             }
 
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: toggleEditMode) {
+                Button(action: toggleEditMode, label: {
                     Text(isEditing ? "Cancel" : "Edit")
-                        .foregroundColor(.white)
-                }
+                        .foregroundColor(.blue)
+                })
             }
         }
         .onAppear(perform: setupInitialValues)
@@ -144,7 +144,7 @@ struct ProfileView: View {
             .sink(
                 receiveCompletion: { completion in
                     isLoading = false
-                    if case .failure(let error) = completion {
+                    if case let .failure(error) = completion {
                         errorMessage = error.localizedDescription
                     } else {
                         // Success - exit edit mode
@@ -158,10 +158,10 @@ struct ProfileView: View {
 }
 
 #if DEBUG
-struct ProfileView_Previews: PreviewProvider {
-    static var previews: some View {
-        ProfileView()
-            .environmentObject(AuthenticationService.preview)
+    struct ProfileView_Previews: PreviewProvider {
+        static var previews: some View {
+            ProfileView()
+                .environmentObject(AuthenticationService.preview)
+        }
     }
-}
 #endif

@@ -5,16 +5,16 @@
 //  Created by Kriss on 2/3/25.
 //
 
-import SwiftUI
-import FirebaseCore
-import FirebaseAuth
 import FirebaseAnalytics
+import FirebaseAuth
+import FirebaseCore
 import FirebaseCrashlytics
+import SwiftUI
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
-        _ application: UIApplication,
-        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+        _: UIApplication,
+        didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         AppLogger.methodEntry(AppLogger.auth)
         FirebaseApp.configure()
