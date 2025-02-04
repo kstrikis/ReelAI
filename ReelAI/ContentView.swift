@@ -10,64 +10,95 @@ import SwiftUI
 struct ContentView: View {
     @EnvironmentObject private var authService: AuthenticationService
     @State private var showMenu = false
-    @State private var dragOffset: CGFloat = 0
     @State private var showingProfile = false
-
+    @State private var currentPage = 1  // 0: Camera, 1: Home, 2: Menu
+    @State private var dragOffset: CGFloat = 0
+    
     var body: some View {
         NavigationView {
-            ZStack {
-                // Background
-                Color.black.ignoresSafeArea()
-
-                VStack {
-                    Image(systemName: "globe")
-                        .imageScale(.large)
-                        .foregroundStyle(.white)
-                    Text("Hello, world!")
-                        .foregroundColor(.white)
-                    Spacer()
-                }
-                .padding()
-
-                // Side menu
-                if showMenu {
+            GeometryReader { geometry in
+                ZStack {
+                    // Camera View (Page 0)
+                    CameraRecordingView()
+                        .offset(x: -geometry.size.width + dragOffset)
+                    
+                    // Main Content (Page 1)
+                    ZStack {
+                        // Background
+                        Color.black.ignoresSafeArea()
+                        
+                        VStack {
+                            Image(systemName: "globe")
+                                .imageScale(.large)
+                                .foregroundStyle(.white)
+                            Text("Hello, world!")
+                                .foregroundColor(.white)
+                            Spacer()
+                        }
+                        .padding()
+                    }
+                    .offset(x: dragOffset)
+                    
+                    // Menu View (Page 2)
                     SideMenuView(isPresented: $showMenu)
-                        .transition(.move(edge: .trailing))
+                        .offset(x: geometry.size.width + dragOffset)
                 }
+                .gesture(
+                    DragGesture()
+                        .onChanged { gesture in
+                            let translation = gesture.translation.width
+                            let maxDrag = geometry.size.width / 2
+                            
+                            // Limit drag based on current page
+                            switch currentPage {
+                            case 0: // Camera page
+                                dragOffset = min(maxDrag, max(0, translation))
+                            case 1: // Home page
+                                dragOffset = min(maxDrag, max(-maxDrag, translation))
+                            case 2: // Menu page
+                                dragOffset = min(0, max(-maxDrag, translation))
+                            default:
+                                break
+                            }
+                        }
+                        .onEnded { gesture in
+                            let velocity = gesture.predictedEndTranslation.width - gesture.translation.width
+                            let translation = gesture.translation.width
+                            
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                // Determine page transition based on drag distance and velocity
+                                if abs(translation) > geometry.size.width / 4 || abs(velocity) > 100 {
+                                    if translation > 0 && currentPage > 0 {
+                                        currentPage -= 1
+                                        dragOffset = 0
+                                    } else if translation < 0 && currentPage < 2 {
+                                        currentPage += 1
+                                        dragOffset = 0
+                                    } else {
+                                        dragOffset = 0
+                                    }
+                                } else {
+                                    // Spring back to original position
+                                    dragOffset = 0
+                                }
+                            }
+                        }
+                )
             }
             .navigationTitle("ReelAI")
             .navigationBarTitleDisplayMode(.large)
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(
-                        action: { withAnimation { showMenu.toggle() } },
-                        label: {
-                            Image(systemName: "line.3.horizontal")
-                                .foregroundColor(.white)
-                        }
-                    )
+                    Button(action: { showingProfile = true }) {
+                        Image(systemName: "person.circle")
+                            .foregroundColor(.white)
+                    }
                 }
             }
             .sheet(isPresented: $showingProfile) {
                 ProfileView()
             }
-            .gesture(
-                DragGesture()
-                    .onChanged { gesture in
-                        if gesture.translation.width < 0 {
-                            dragOffset = gesture.translation.width
-                        }
-                    }
-                    .onEnded { gesture in
-                        if gesture.translation.width < -50 {
-                            withAnimation {
-                                showMenu = true
-                            }
-                        }
-                        dragOffset = 0
-                    }
-            )
         }
     }
 
