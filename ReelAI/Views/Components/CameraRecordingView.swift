@@ -47,7 +47,7 @@ final class CameraViewModel {
 }
 
 struct CameraRecordingView: View {
-    @Environment(\.dismiss) private var dismiss
+    let isActive: Bool
     @State private var viewModel = CameraViewModel()
     @State private var isRecording = false
     
@@ -67,21 +67,6 @@ struct CameraRecordingView: View {
                 
                 // Controls overlay
                 VStack {
-                    // Top bar
-                    HStack {
-                        Button(action: {
-                            viewModel.stopCamera()
-                            dismiss()
-                        }) {
-                            Image(systemName: "xmark")
-                                .foregroundColor(.white)
-                                .font(.title2)
-                                .padding()
-                        }
-                        
-                        Spacer()
-                    }
-                    
                     Spacer()
                     
                     // Bottom controls
@@ -107,10 +92,16 @@ struct CameraRecordingView: View {
             }
         }
         .ignoresSafeArea()
-        .task {
-            AppLogger.methodEntry(AppLogger.ui)
-            await viewModel.handleCameraPreviews()
-            AppLogger.methodExit(AppLogger.ui)
+        .onChange(of: isActive) { wasActive, isNowActive in
+            if isNowActive {
+                // Start camera when swiping to this view
+                Task {
+                    await viewModel.handleCameraPreviews()
+                }
+            } else {
+                // Stop camera when swiping away
+                viewModel.stopCamera()
+            }
         }
     }
     
@@ -127,7 +118,7 @@ struct CameraRecordingView: View {
 #if DEBUG
 struct CameraRecordingView_Previews: PreviewProvider {
     static var previews: some View {
-        CameraRecordingView()
+        CameraRecordingView(isActive: true)
     }
 }
 #endif 

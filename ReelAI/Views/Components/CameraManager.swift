@@ -21,7 +21,6 @@ final class CameraManager: NSObject, @unchecked Sendable {
     private var videoOutput: AVCaptureVideoDataOutput?
     private let systemPreferredCamera = AVCaptureDevice.default(for: .video)
     private var sessionQueue = DispatchQueue(label: "video.preview.session")
-    private var isConfigured = false
     
     private var addToPreviewStream: ((CGImage) -> Void)?
     
@@ -80,9 +79,6 @@ final class CameraManager: NSObject, @unchecked Sendable {
     }
     
     func prepareAndStart() async {
-        guard !isConfigured else { return }
-        isConfigured = true
-        
         print("📸 Starting camera setup")
         await configureSession()
         await startSession()
@@ -170,6 +166,13 @@ final class CameraManager: NSObject, @unchecked Sendable {
             print("📸 Camera session stopped")
         }
         
+        AppLogger.methodExit(AppLogger.ui)
+    }
+    
+    func reset() {
+        AppLogger.methodEntry(AppLogger.ui)
+        print("📸 Resetting camera manager")
+        stopSession()
         AppLogger.methodExit(AppLogger.ui)
     }
 }
