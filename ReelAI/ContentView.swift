@@ -40,10 +40,13 @@ struct ContentView: View {
             .toolbarBackground(Color.black, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(action: { withAnimation { showMenu.toggle() } }) {
-                        Image(systemName: "line.3.horizontal")
-                            .foregroundColor(.white)
-                    }
+                    Button(
+                        action: { withAnimation { showMenu.toggle() } },
+                        label: {
+                            Image(systemName: "line.3.horizontal")
+                                .foregroundColor(.white)
+                        }
+                    )
                 }
             }
             .sheet(isPresented: $showingProfile) {
@@ -79,4 +82,3 @@ struct ContentView: View {
     ContentView()
         .environmentObject(AuthenticationService.preview)
 }
-

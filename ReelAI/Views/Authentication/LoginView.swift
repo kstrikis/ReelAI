@@ -187,7 +187,11 @@ final class CancellableStore: ObservableObject {
 
 extension Cancellable {
     func store(in store: CancellableStore) {
-        store.store(self as! AnyCancellable)
+        if let cancellable = self as? AnyCancellable {
+            store.store(cancellable)
+        } else {
+            assertionFailure("Expected AnyCancellable but got \(type(of: self))")
+        }
     }
 }
 

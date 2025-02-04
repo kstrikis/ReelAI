@@ -26,29 +26,29 @@ Next Steps:
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Below is an end-to-end plan for our MVP’s data architecture in Firebase, along with naming conventions and inline comments for future enhancements.
+Below is an end-to-end plan for our MVP's data architecture in Firebase, along with naming conventions and inline comments for future enhancements.
 
 ──────────────────────────────────────────────
 1. Firebase Authentication & Demo Mode
 ──────────────────────────────────────────────
-• We’ll use Firebase Auth for standard user authentication.  
-• For demo purposes, add a “Demo Login” button on the login screen.  
-  – When tapping Demo Login, use a fixed demo account (for example, hard-code credentials or use Firebase’s anonymous authentication and then link to a “demo” profile).  
+• We'll use Firebase Auth for standard user authentication.  
+• For demo purposes, add a "Demo Login" button on the login screen.  
+  – When tapping Demo Login, use a fixed demo account (for example, hard-code credentials or use Firebase's anonymous authentication and then link to a "demo" profile).  
   – This lets developers and demonstrators bypass a full sign-up flow quickly.  
 
 ──────────────────────────────────────────────
 2. Firestore Data Model
 ──────────────────────────────────────────────
-Our schema revolves around a few key collections. We’ll follow lowerCamelCase for fields and plural names for collections. This provides consistency in our Swift code and Firestore queries.
+Our schema revolves around a few key collections. We'll follow lowerCamelCase for fields and plural names for collections. This provides consistency in our Swift code and Firestore queries.
 
 A. Users Collection ("users")
   – Each user document is keyed by the UID from Firebase Auth.
   – Fields (in lowerCamelCase):
-   • displayName (String) – User’s chosen display name.
+   • displayName (String) – User's chosen display name.
    • email (String, optional) – Email from Auth (if available).
    • profileImageUrl (String, optional) – Link to user avatar stored in Firebase Storage.
    • createdAt (Timestamp) – When the user joined.
-   • additional future fields (e.g., bio, socialLinks…) can be added as needed.
+   • additional future fields (e.g., bio, socialLinks...) can be added as needed.
 
   // Sample document structure for a user:
   {
@@ -111,13 +111,13 @@ We can approach interactions in one of two ways. For an MVP, a simple method is 
 ──────────────────────────────────────────────
 3. Firebase Storage Structure
 ──────────────────────────────────────────────
-We’ll use Firebase Storage to hold the actual media files referenced in our Firestore documents.
+We'll use Firebase Storage to hold the actual media files referenced in our Firestore documents.
 
 • Organization in Storage should be clear and maintainable:
   – /users/{uid}/profileImage.jpg  
   – /videos/{videoId}/raw.mp4  
   – /videos/{videoId}/edited.mp4  
-  – Future additions, such as AI-generated images or audio clips, could fit under similar directories (e.g., /videos/{videoId}/aiImages/…).
+  – Future additions, such as AI-generated images or audio clips, could fit under similar directories (e.g., /videos/{videoId}/aiImages/...).
 
 ──────────────────────────────────────────────
 4. Naming Conventions in Swift & Firestore
@@ -149,14 +149,47 @@ We’ll use Firebase Storage to hold the actual media files referenced in our Fi
 ──────────────────────────────────────────────
 • For now, our plan focuses on core functionality: user authentication (including a demo mode), video capture/upload, basic editing metadata storage, and simple interaction tracking.  
 • As we evolve the app, we can introduce additional fields like AI-generated script data, voice synthesis metadata, and more refined editing history.  
-• We’re mindful of avoiding over-embedding data; by favoring references (like storing user UID in video documents) and subcollections for interactions, we maintain scalability.
+• We're mindful of avoiding over-embedding data; by favoring references (like storing user UID in video documents) and subcollections for interactions, we maintain scalability.
   – If we see extremely heavy interaction volumes, we might consider alternative patterns (like storing aggregate counts or using Cloud Functions for real-time tallies).
 
 ──────────────────────────────────────────────
 Summary
 ──────────────────────────────────────────────
-By using Firebase Auth, Firestore, and Firebase Storage together, we’ll create a fast, scalable MVP that lets users log in (with a demo option), create videos from various media components, and interact with content in real time. Our data model uses clean naming conventions and a modular structure that is easy to extend as more advanced AI features are added.
+By using Firebase Auth, Firestore, and Firebase Storage together, we'll create a fast, scalable MVP that lets users log in (with a demo option), create videos from various media components, and interact with content in real time. Our data model uses clean naming conventions and a modular structure that is easy to extend as more advanced AI features are added.
 
 This approach meets our immediate need to demonstrate a meme video creation tool while laying the groundwork for future enhancements.
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# AI Working Notes
+
+## Latest Updates
+- Cleaned up ContentView.swift:
+  - Removed redundant outer ZStack
+  - Fixed sheet modifier placement
+  - Removed unused signOut function
+  - Simplified view hierarchy and modifiers
+- Fixed error handling in LoginView.swift:
+  - Removed redundant AuthError type casting
+  - Simplified error message display
+- Fixed AppLogger.ui references and added SwiftLint exception
+- Remaining tasks:
+  - Address force cast in LoginView.swift
+  - Fix multiple closures with trailing closure violations
+  - Resolve TODOs in SideMenuView.swift
+  - Add proper trailing newlines to files
+
+## Configuration Notes
+- Using SwiftUI for UI components
+- Firebase for authentication and data storage
+- SwiftLint for code quality enforcement
+
+## Debugging Notes
+- NavigationView and toolbar styling requires careful modifier ordering
+- Error handling should be simplified where possible
+- View hierarchy should be kept minimal for better performance
+
+## Decisions
+- Keeping AppLogger.ui as short name with SwiftLint exception
+- Simplified error handling in authentication flows
+- Removed redundant view wrapping in ContentView
