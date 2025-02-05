@@ -39,50 +39,50 @@ final class CameraManager: NSObject, @unchecked Sendable {
 
     func startRecording() async throws -> URL {
         AppLogger.methodEntry(AppLogger.ui)
-        
+
         guard !isRecording else {
             throw CameraError.recordingFailed(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Already recording"]))
         }
-        
+
         // Create temporary URL for recording
         let tempDir = FileManager.default.temporaryDirectory
         let fileName = "\(UUID().uuidString).mp4"
         let outputURL = tempDir.appendingPathComponent(fileName)
-        
+
         // Remove any existing file
         try? FileManager.default.removeItem(at: outputURL)
-        
+
         return try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async { [weak self] in
-                guard let self = self else {
+                guard let self else {
                     continuation.resume(throwing: CameraError.recordingFailed(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "CameraManager deallocated"])))
                     return
                 }
-                
-                self.movieOutput?.startRecording(to: outputURL, recordingDelegate: self)
-                self.currentRecordingURL = outputURL
-                self.isRecording = true
-                
+
+                movieOutput?.startRecording(to: outputURL, recordingDelegate: self)
+                currentRecordingURL = outputURL
+                isRecording = true
+
                 continuation.resume(returning: outputURL)
             }
         }
     }
-    
+
     func stopRecording() async throws -> URL {
         AppLogger.methodEntry(AppLogger.ui)
-        
+
         guard isRecording, let outputURL = currentRecordingURL else {
             throw CameraError.recordingFailed(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Not recording"]))
         }
-        
+
         return try await withCheckedThrowingContinuation { continuation in
             sessionQueue.async { [weak self] in
-                guard let self = self else {
+                guard let self else {
                     continuation.resume(throwing: CameraError.recordingFailed(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "CameraManager deallocated"])))
                     return
                 }
-                
-                self.movieOutput?.stopRecording()
+
+                movieOutput?.stopRecording()
                 // URL will be returned in fileOutput(_:didFinishRecordingTo:from:error:)
                 continuation.resume(returning: outputURL)
             }
@@ -144,33 +144,33 @@ final class CameraManager: NSObject, @unchecked Sendable {
     func switchCamera() async {
         AppLogger.methodEntry(AppLogger.ui)
         print("📸 Switching camera")
-        
+
         do {
             // Stop the current session first
             stopSession()
-            
+
             // Toggle camera position
             isFrontCameraActive.toggle()
             print("📸 Switching to \(isFrontCameraActive ? "front" : "back") camera")
-            
+
             // Wait a brief moment to ensure cleanup
             try await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
-            
+
             // Configure and start new session
             await configureSession()
             await startSession()
-            
+
             print("📸 Camera switch completed successfully")
         } catch {
             print("❌ Camera switch failed: \(error.localizedDescription)")
             AppLogger.error(AppLogger.ui, CameraError.setupFailed(error))
-            
+
             // Try to recover by reverting to previous camera
             isFrontCameraActive.toggle()
             await configureSession()
             await startSession()
         }
-        
+
         AppLogger.methodExit(AppLogger.ui)
     }
 
@@ -196,7 +196,7 @@ final class CameraManager: NSObject, @unchecked Sendable {
         do {
             // Stop previous session if running
             stopSession()
-            
+
             // Wait briefly for cleanup
             try? await Task.sleep(nanoseconds: 50_000_000) // 0.05 seconds
 
@@ -292,19 +292,19 @@ final class CameraManager: NSObject, @unchecked Sendable {
     private func startSession() async {
         AppLogger.methodEntry(AppLogger.ui)
         print("📸 Starting camera session...")
-        
+
         return await withCheckedContinuation { continuation in
             sessionQueue.async { [weak self] in
-                guard let self = self else {
+                guard let self else {
                     continuation.resume()
                     return
                 }
-                
-                if !self.captureSession.isRunning {
-                    self.captureSession.startRunning()
+
+                if !captureSession.isRunning {
+                    captureSession.startRunning()
                     print("📸 Camera session started")
                 }
-                
+
                 continuation.resume()
             }
         }
@@ -313,27 +313,27 @@ final class CameraManager: NSObject, @unchecked Sendable {
     func stopSession() {
         AppLogger.methodEntry(AppLogger.ui)
         print("📸 Stopping camera session...")
-        
+
         sessionQueue.async { [weak self] in
-            guard let self = self else { return }
-            
-            if self.captureSession.isRunning {
-                self.captureSession.stopRunning()
+            guard let self else { return }
+
+            if captureSession.isRunning {
+                captureSession.stopRunning()
                 print("📸 Camera session stopped")
             }
-            
+
             // Clear existing inputs and outputs
-            self.captureSession.beginConfiguration()
-            self.captureSession.inputs.forEach { self.captureSession.removeInput($0) }
-            self.captureSession.outputs.forEach { self.captureSession.removeOutput($0) }
-            self.captureSession.commitConfiguration()
-            
+            captureSession.beginConfiguration()
+            captureSession.inputs.forEach { self.captureSession.removeInput($0) }
+            captureSession.outputs.forEach { self.captureSession.removeOutput($0) }
+            captureSession.commitConfiguration()
+
             // Clear references
-            self.deviceInput = nil
-            self.videoOutput = nil
-            self.movieOutput = nil
+            deviceInput = nil
+            videoOutput = nil
+            movieOutput = nil
         }
-        
+
         AppLogger.methodExit(AppLogger.ui)
     }
 
@@ -359,21 +359,21 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 // MARK: - AVCaptureFileOutputRecordingDelegate
 
 extension CameraManager: AVCaptureFileOutputRecordingDelegate {
-    func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from _: [AVCaptureConnection], error: Error?) {
+    func fileOutput(_: AVCaptureFileOutput, didFinishRecordingTo outputFileURL: URL, from _: [AVCaptureConnection], error: Error?) {
         AppLogger.methodEntry(AppLogger.ui)
-        
+
         isRecording = false
         currentRecordingURL = nil
-        
-        if let error = error {
+
+        if let error {
             AppLogger.error(AppLogger.ui, error)
         } else {
             AppLogger.debug("Recording finished successfully at: \(outputFileURL.path)")
         }
-        
+
         AppLogger.methodExit(AppLogger.ui)
     }
-    
+
     func fileOutput(_: AVCaptureFileOutput, didStartRecordingTo _: URL, from _: [AVCaptureConnection]) {
         AppLogger.methodEntry(AppLogger.ui)
         AppLogger.debug("Started recording")

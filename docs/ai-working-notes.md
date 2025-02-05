@@ -171,25 +171,42 @@ This approach meets our immediate need to demonstrate a meme video creation tool
   - Added camera flip button
   - Proper camera lifecycle management with tab changes
   - Fixed video orientation issues
+  - Added gallery access button
+- Added video persistence and gallery:
+  - Created LocalVideoService for persistent video storage in Documents directory
+  - Implemented GalleryView with video thumbnails and playback
+  - Modified video recording flow to save locally before upload
+  - Videos now persist between app launches
+  - Gallery accessible via button in camera view
 - Remaining tasks:
   - Address SwiftLint warnings in CameraManager.swift
-  - Implement video recording functionality
   - Add proper error handling for camera permissions
   - Add loading states for camera initialization
+  - Add video deletion capability in gallery
+  - Add video sharing from gallery
+  - Implement video processing status indicators
+  - Consider adding video metadata editing (title, description) in gallery
 
 ## Configuration Notes
 - Using SwiftUI for UI components
 - Firebase for authentication and data storage
 - SwiftLint for code quality enforcement
 - Camera restricted to portrait mode only
+- Videos stored in Documents/Videos directory for persistence
 
 ## Debugging Notes
 - Camera orientation needs to be set to 90 degrees for proper portrait display
 - Camera initialization should happen when view becomes active
 - Camera cleanup on view disappear is important for resource management
+- Videos are now saved locally before upload to ensure persistence
+- Thumbnails are generated on-demand for better performance
+- Gallery view is presented modally to maintain camera state
 
 ## Decisions
 - Using singleton pattern for CameraManager to prevent multiple instances
 - Keeping camera in portrait mode only
 - Front camera as default for better user experience
 - Tab-based navigation with proper view lifecycle management
+- Storing videos in Documents directory for persistence and backup
+- Using AVAssetImageGenerator for thumbnail generation
+- Gallery accessed via camera view to maintain better UX flow

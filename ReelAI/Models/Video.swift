@@ -11,9 +11,9 @@ struct Video: Codable {
     let processedVideoURL: String?
     @ServerTimestamp var createdAt: Date?
     let status: VideoStatus
-    
+
     var shareURL: URL? {
-        guard let id = id else { return nil }
+        guard let id else { return nil }
         return URL(string: "https://reelai.example.com/@\(username)/\(id)")
     }
 }
@@ -23,4 +23,4 @@ enum VideoStatus: String, Codable {
     case processing
     case ready
     case error
-} 
+}

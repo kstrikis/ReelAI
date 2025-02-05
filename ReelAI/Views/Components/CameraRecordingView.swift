@@ -1,6 +1,6 @@
 import AVFoundation
-import SwiftUI
 import Combine
+import SwiftUI
 
 // MARK: - Publisher Extension
 
@@ -9,14 +9,14 @@ extension Publisher {
         try await withCheckedThrowingContinuation { continuation in
             print("🔄 Converting publisher to async...")
             var cancellable: AnyCancellable?
-            
+
             cancellable = self.sink(
                 receiveCompletion: { completion in
                     print("🔄 Publisher completed")
                     switch completion {
                     case .finished:
                         break
-                    case .failure(let error):
+                    case let .failure(error):
                         print("🔄 Publisher failed: \(error)")
                         continuation.resume(throwing: error)
                     }
@@ -28,7 +28,7 @@ extension Publisher {
                     cancellable?.cancel()
                 }
             )
-            
+
             print("🔄 Publisher subscription created")
         }
     }
@@ -60,10 +60,11 @@ final class CameraViewModel {
     var isRecording = false
     var isUploading = false
     var errorMessage: String?
-    
+
     private let cameraManager = CameraManager.shared
     private let uploadService = VideoUploadService.shared
     private let videoService = VideoService.shared
+    private let localVideoService = LocalVideoService.shared
     private let authService: AuthenticationService
     private var recordingURL: URL?
     private var cancellables = Set<AnyCancellable>()
@@ -90,11 +91,11 @@ final class CameraViewModel {
         cameraManager.stopSession()
         AppLogger.methodExit(AppLogger.ui)
     }
-    
+
     func toggleRecording() async {
         AppLogger.methodEntry(AppLogger.ui)
         print("🎥 Toggle recording called, current state: \(isRecording)")
-        
+
         do {
             if isRecording {
                 print("🎥 Stopping recording...")
@@ -102,7 +103,7 @@ final class CameraViewModel {
                 recordingURL = try await cameraManager.stopRecording()
                 isRecording = false
                 print("🎥 Recording stopped, file at: \(recordingURL?.path ?? "nil")")
-                
+
                 // Upload the video
                 print("🎥 Starting upload process...")
                 await uploadVideo()
@@ -119,23 +120,23 @@ final class CameraViewModel {
             errorMessage = error.localizedDescription
             AppLogger.error(AppLogger.ui, error)
         }
-        
+
         AppLogger.methodExit(AppLogger.ui)
     }
-    
+
     private func uploadVideo() async {
         AppLogger.methodEntry(AppLogger.ui)
-        
-        guard let url = recordingURL else {
+
+        guard let tempURL = recordingURL else {
             print("❌ Upload failed: No video URL available")
             errorMessage = "No video to upload"
             return
         }
-        print("📤 Video file location: \(url.path)")
-        
+        print("📤 Temporary video file location: \(tempURL.path)")
+
         isUploading = true
         print("📤 Upload state set to true")
-        
+
         // First check Firebase auth state
         guard let userId = authService.currentUser?.uid else {
             print("❌ Upload failed: No Firebase user found")
@@ -144,20 +145,37 @@ final class CameraViewModel {
             isUploading = false
             return
         }
-        
+
+        // Save to persistent storage first
+        print("📤 Saving video to persistent storage...")
+        do {
+            let persistentURL = try await localVideoService.saveVideo(from: tempURL).async()
+            print("✅ Video saved to persistent storage at: \(persistentURL.path)")
+            
+            // Clean up the temporary file
+            try FileManager.default.removeItem(at: tempURL)
+            print("✅ Temporary file deleted successfully")
+            recordingURL = persistentURL
+        } catch {
+            print("❌ Failed to save video to persistent storage: \(error.localizedDescription)")
+            errorMessage = "Failed to save video"
+            isUploading = false
+            return
+        }
+
         // Then check user profile separately with retry logic
         if authService.userProfile == nil {
             print("📤 User profile not loaded, attempting to load...")
             print("📤 Waiting for profile to load (max 5 seconds)...")
-            
+
             // Wait for up to 5 seconds for the profile to load
-            for _ in 0..<10 {
+            for _ in 0 ..< 10 {
                 if authService.userProfile != nil { break }
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
                 print("📤 Still waiting for profile...")
             }
         }
-        
+
         guard let username = authService.userProfile?.username else {
             print("❌ Upload failed: Could not load user profile")
             print("📤 Firebase UID: \(userId)")
@@ -167,31 +185,31 @@ final class CameraViewModel {
             isUploading = false
             return
         }
-        
+
         print("📤 Starting upload with userId: \(userId)")
         print("📤 Username: \(username)")
         print("📤 Auth details:")
         print("  - Firebase UID: \(userId)")
         print("  - Username: \(username)")
         print("  - Email: \(authService.userProfile?.email ?? "none")")
-        
-        uploadService.uploadVideo(at: url, userId: userId)
+
+        uploadService.uploadVideo(at: recordingURL!, userId: userId)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
-                guard let self = self else {
+                guard let self else {
                     print("⚠️ Self reference lost during upload")
                     return
                 }
-                
+
                 switch state {
-                case .progress(let progress):
+                case let .progress(progress):
                     print("🎥 Upload progress update received: \(String(format: "%.1f", progress * 100))%")
-                    
-                case .completed(let ref):
+
+                case let .completed(ref):
                     print("🎥 Upload completed successfully")
                     print("🎥 Storage reference: \(ref.fullPath)")
                     print("🎥 Creating Firestore metadata...")
-                    
+
                     // Create Firestore metadata
                     Task {
                         do {
@@ -201,24 +219,14 @@ final class CameraViewModel {
                                 username: username,
                                 rawVideoURL: ref.fullPath
                             ).async()
-                            
+
                             print("🎥 Video metadata created successfully")
                             print("🎥 Video ID: \(video.id ?? "unknown")")
                             print("🎥 Raw video URL: \(video.rawVideoURL)")
-                            
-                            print("🎥 Cleaning up temporary file...")
-                            // Clean up the temporary file
-                            do {
-                                try FileManager.default.removeItem(at: url)
-                                print("✅ Temporary file deleted successfully")
-                            } catch {
-                                print("⚠️ Failed to delete temporary file: \(error.localizedDescription)")
-                            }
-                            
-                            self.recordingURL = nil
+
                             self.isUploading = false
                             print("✅ Upload process completed successfully")
-                            
+
                         } catch {
                             print("❌ Metadata creation failed: \(error.localizedDescription)")
                             print("❌ Error details: \(error)")
@@ -227,8 +235,8 @@ final class CameraViewModel {
                             AppLogger.error(AppLogger.ui, error)
                         }
                     }
-                    
-                case .failure(let error):
+
+                case let .failure(error):
                     print("❌ Upload failed in CameraViewModel")
                     print("❌ Error: \(error.localizedDescription)")
                     if let nsError = error as NSError? {
@@ -236,13 +244,13 @@ final class CameraViewModel {
                         print("❌ Error code: \(nsError.code)")
                         print("❌ User info: \(nsError.userInfo)")
                     }
-                    self.errorMessage = error.localizedDescription
-                    self.isUploading = false
+                    errorMessage = error.localizedDescription
+                    isUploading = false
                     AppLogger.error(AppLogger.ui, CameraError.uploadFailed(error))
                 }
             }
             .store(in: &cancellables)
-        
+
         print("📤 Upload publisher subscription created")
         AppLogger.methodExit(AppLogger.ui)
     }
@@ -252,6 +260,7 @@ struct CameraRecordingView: View {
     let isActive: Bool
     @EnvironmentObject private var authService: AuthenticationService
     @State private var viewModel: CameraViewModel?
+    @State private var showingGallery = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -271,7 +280,17 @@ struct CameraRecordingView: View {
                 VStack {
                     // Top controls
                     HStack {
+                        Button(action: {
+                            showingGallery = true
+                        }, label: {
+                            Image(systemName: "photo.on.rectangle")
+                                .font(.system(size: 24))
+                                .foregroundColor(.white)
+                                .padding()
+                        })
+                        
                         Spacer()
+                        
                         Button(action: {
                             Task {
                                 await CameraManager.shared.switchCamera()
@@ -296,7 +315,7 @@ struct CameraRecordingView: View {
                                 .padding(.horizontal)
                                 .multilineTextAlignment(.center)
                         }
-                        
+
                         HStack {
                             Spacer()
 
@@ -331,6 +350,14 @@ struct CameraRecordingView: View {
             }
         }
         .ignoresSafeArea()
+        .sheet(isPresented: $showingGallery) {
+            NavigationView {
+                GalleryView()
+                    .navigationBarItems(trailing: Button("Done") {
+                        showingGallery = false
+                    })
+            }
+        }
         .onChange(of: isActive) { _, isNowActive in
             if isNowActive {
                 // Initialize viewModel with authService

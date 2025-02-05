@@ -80,7 +80,7 @@ final class AuthenticationService: ObservableObject {
                     AppLogger.debug("👤 User signed in: \(user.uid)")
                     print("👤 Firebase auth state changed - User signed in: \(user.uid)")
                     authState = .signedIn(user)
-                    
+
                     // Create a robust profile fetch
                     database.collection("users").document(user.uid)
                         .snapshotPublisher()
@@ -90,7 +90,7 @@ final class AuthenticationService: ObservableObject {
                                 print("❌ Failed to fetch user profile: \(error.localizedDescription)")
                                 print("⚠️ Using local default profile due to network error")
                                 AppLogger.error(AppLogger.auth, error, context: "Fetch user profile")
-                                
+
                                 // Create and set a local profile immediately
                                 if self.userProfile == nil {
                                     let defaultProfile = UserProfile(
@@ -117,18 +117,18 @@ final class AuthenticationService: ObservableObject {
                             } else {
                                 print("⚠️ No profile document exists for user: \(user.uid)")
                                 print("👤 Creating default profile...")
-                                
+
                                 // Create and set default profile IMMEDIATELY
                                 let defaultProfile = UserProfile(
                                     username: "user\(user.uid.prefix(6))",
                                     displayName: "New User",
                                     email: user.email
                                 )
-                                
+
                                 // Set it locally right away
                                 self?.userProfile = defaultProfile
                                 print("✅ Local default profile created")
-                                
+
                                 // Then try to save it to Firestore
                                 self?.updateProfile(defaultProfile)
                                     .sink(
@@ -264,7 +264,7 @@ final class AuthenticationService: ObservableObject {
         return Future<Void, Error> { promise in
             self.database.collection("usernames").document(username).setData([
                 "userId": userId,
-                "createdAt": FieldValue.serverTimestamp()
+                "createdAt": FieldValue.serverTimestamp(),
             ]) { error in
                 if let error {
                     AppLogger.error(AppLogger.auth, error, context: "Reserve username")
@@ -365,7 +365,7 @@ final class AuthenticationService: ObservableObject {
             .flatMap { user -> AnyPublisher<User, Error> in
                 print("🎭 Demo user authenticated successfully")
                 print("🎭 Creating/updating demo profile...")
-                
+
                 // Create demo profile
                 let profile = UserProfile(
                     username: "demo",
@@ -373,7 +373,7 @@ final class AuthenticationService: ObservableObject {
                     email: user.email,
                     profileImageUrl: nil
                 )
-                
+
                 // Return a publisher that completes only when both auth and profile are done
                 return self.updateProfile(profile)
                     .map { _ -> User in

@@ -25,6 +25,9 @@ struct AppLogger {
     /// Logger for data operations
     static let data = Logger(subsystem: subsystem, category: "data")
 
+    /// Logger for service operations
+    static let service = Logger(subsystem: subsystem, category: "service")
+
     // MARK: - Convenience Methods
 
     /// Logs method entry with parameters (if any)
@@ -92,9 +95,9 @@ struct AppLogger {
     ///   - line: Line number (automatically provided)
     func methodEntry(
         _ message: String,
-        file: String = #file,
-        function: String = #function,
-        line: Int = #line
+        file _: String = #file,
+        function _: String = #function,
+        line _: Int = #line
     ) {
         AppLogger.debug("\(message)")
     }
@@ -107,9 +110,9 @@ struct AppLogger {
     ///   - line: Line number (automatically provided)
     func methodExit(
         _ message: String,
-        file: String = #file,
-        function: String = #function,
-        line: Int = #line
+        file _: String = #file,
+        function _: String = #function,
+        line _: Int = #line
     ) {
         AppLogger.debug("\(message)")
     }
