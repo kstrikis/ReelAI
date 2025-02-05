@@ -215,18 +215,31 @@ class PublishingViewModel: ObservableObject {
             
             if let error = error {
                 AppLogger.dbError("Failed to get download URL", error: error, collection: "videos")
-                self.errorMessage = "Failed to get video URL: \(error.localizedDescription)"
-                self.showingError = true
-                self.isUploading = false
+                DispatchQueue.main.async {
+                    self.errorMessage = "Failed to get video URL: \(error.localizedDescription)"
+                    self.showingError = true
+                    self.isUploading = false
+                }
                 return
             }
             
             guard let downloadURL = url?.absoluteString else {
                 AppLogger.dbError("Download URL is nil", error: NSError(domain: "", code: -1), collection: "videos")
-                self.errorMessage = "Failed to get video URL"
-                self.showingError = true
-                self.isUploading = false
+                DispatchQueue.main.async {
+                    self.errorMessage = "Failed to get video URL"
+                    self.showingError = true
+                    self.isUploading = false
+                }
                 return
+            }
+            
+            AppLogger.dbEntry("Got download URL: \(downloadURL)", collection: "videos")
+            AppLogger.dbEntry("Current auth state:", collection: "videos")
+            if let user = Auth.auth().currentUser {
+                AppLogger.dbEntry("  - User ID: \(user.uid)", collection: "videos")
+                AppLogger.dbEntry("  - Display Name: \(user.displayName ?? "none")", collection: "videos")
+            } else {
+                AppLogger.dbError("No authenticated user", error: NSError(), collection: "videos")
             }
             
             // Save to Firestore
@@ -243,16 +256,18 @@ class PublishingViewModel: ObservableObject {
                     guard let self = self else { return }
                     self.isUploading = false
                     
-                    if case let .failure(error) = completion {
+                    switch completion {
+                    case .finished:
+                        AppLogger.dbSuccess("Video metadata saved successfully", collection: "videos")
+                        self.showingSuccess = true
+                    case .failure(let error):
                         AppLogger.dbError("Failed to save video metadata", error: error, collection: "videos")
                         self.errorMessage = "Failed to save video details: \(error.localizedDescription)"
                         self.showingError = true
                     }
                 },
-                receiveValue: { [weak self] _ in
-                    guard let self = self else { return }
-                    AppLogger.dbSuccess("Video metadata saved successfully", collection: "videos")
-                    self.showingSuccess = true
+                receiveValue: { [weak self] message in
+                    AppLogger.dbSuccess("Received success message: \(message)", collection: "videos")
                 }
             )
             .store(in: &self.cancellables)

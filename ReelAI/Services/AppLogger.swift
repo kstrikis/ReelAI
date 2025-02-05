@@ -129,6 +129,9 @@ struct AppLogger {
             line: Int = #line
         ) {
             let fileName = (file as NSString).lastPathComponent
+            print("🪲 DEBUG: \(fileName):\(line) - \(message)")  // Changed to print
+            
+            // Also log to system logger for good measure
             let logger = Logger(subsystem: subsystem, category: "debug")
             logger.debug("📝 \(fileName):\(line) - \(message, privacy: .public)")
         }

@@ -2,14 +2,34 @@ import FirebaseFirestore
 import FirebaseFirestoreCombineSwift
 import Combine
 import Foundation
+import FirebaseAuth
 
 /// Manages all Firestore database operations
 final class FirestoreService {
     static let shared = FirestoreService()
-    private let db = Firestore.firestore()
+    private let db: Firestore
     
     private init() {
         AppLogger.dbEntry("Initializing FirestoreService")
+        
+        // Initialize Firestore
+        db = Firestore.firestore()
+        
+        // Log configuration details
+        print("🔥 Firestore Configuration:")
+        print("  - Project ID: \(db.app.options.projectID)")
+        print("  - Storage Bucket: \(db.app.options.storageBucket)")
+        
+        // Enable network and verify connection
+        db.enableNetwork { error in
+            if let error = error {
+                print("❌ Failed to enable network: \(error)")
+            } else {
+                print("✅ Network enabled")
+            }
+        }
+        
+        AppLogger.dbEntry("Firestore service initialized")
     }
     
     // MARK: - User Profile Operations
@@ -91,6 +111,10 @@ final class FirestoreService {
     
     func createVideo(title: String, description: String?, mediaUrl: String, userId: String, username: String) -> AnyPublisher<String, Error> {
         AppLogger.dbWrite("Creating new video document", collection: "videos")
+        AppLogger.dbEntry("Video metadata:", collection: "videos")
+        AppLogger.dbEntry("  - Title: \(title)", collection: "videos")
+        AppLogger.dbEntry("  - User ID: \(userId)", collection: "videos")
+        AppLogger.dbEntry("  - Media URL: \(mediaUrl)", collection: "videos")
         
         let data: [String: Any] = [
             "ownerId": userId,
@@ -103,12 +127,24 @@ final class FirestoreService {
         ]
         
         return Future<String, Error> { promise in
+            // Verify Firebase Auth state first
+            guard let currentUser = Auth.auth().currentUser,
+                  currentUser.uid == userId else {
+                let error = NSError(domain: "com.kstrikis.ReelAI",
+                                  code: -1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Authentication mismatch or missing"])
+                AppLogger.dbError("Failed to create video - auth mismatch", error: error, collection: "videos")
+                promise(.failure(error))
+                return
+            }
+            
+            AppLogger.dbEntry("Creating document in 'videos' collection...", collection: "videos")
             self.db.collection("videos").addDocument(data: data) { error in
                 if let error = error {
                     AppLogger.dbError("Failed to create video document", error: error, collection: "videos")
                     promise(.failure(error))
                 } else {
-                    AppLogger.dbSuccess("Created video document", collection: "videos")
+                    AppLogger.dbSuccess("Created video document successfully", collection: "videos")
                     promise(.success("Video document created successfully"))
                 }
             }
