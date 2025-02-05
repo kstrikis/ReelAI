@@ -1,137 +1,159 @@
 # ReelAI Logging Standards
 
-## 1. Visual Logging Pattern
+## Critical Logging Points
 
-### Component Identifiers (First Emoji)
-Each major component in the application uses a consistent first emoji as its "sheet" identifier:
-- 📼 LocalVideoService operations
-- 🖼️ Gallery/UI operations
-- 📸 Camera operations
-- 📤 Upload operations
-- 🔄 Async/await operations
-
-### Operation Types (Second Emoji)
-The second emoji indicates the specific type of operation:
-
-#### Setup & Configuration
-- 🎬 Initialization/setup
-- ⚙️ Configuration changes
-
-#### File Operations
-- 📁 Directory/file operations
-- 💾 Save operations
-- 🗑️ Delete operations
-- 🔍 Search/fetch operations
-
-#### Media Operations
-- 🖼️ Thumbnail operations
-- 📹 Recording operations
-- ▶️ Start operations
-- ⏹️ Stop operations
-
-#### Status & Progress
-- 📊 Progress/status updates
-- ✅ Success completion
-- 🧹 Cleanup operations
-
-#### Authentication & Upload
-- 🔑 Authentication operations
-- 📤 Upload operations
-- 🛑 Stop/shutdown operations
-
-### Error Patterns
-Errors use distinct patterns to stand out:
-- ❌ 💥 Serious errors (crashes, system failures)
-- ❌ 🔒 Authentication/permission errors
-- ❌ 🚫 Validation/state errors
-- ⚠️ Warnings
-
-## 2. Implementation Guidelines
-
-### Basic Usage
+### 1. State Transitions
+Always log when the application's state changes significantly:
 ```swift
-// Component initialization
-print("📼 🎬 Initializing LocalVideoService")
+// View lifecycle
+print("🖼️ 🎬 View appearing - current state: \(state)")
+print("🖼️ 🛑 View disappearing - cleaning up resources")
 
-// Operation progress
-print("📼 💾 Starting video save operation")
-print("📼 ✅ Saved video to \(path)")
+// User session changes
+print("🔑 ⚡️ User session state changed: \(oldState) -> \(newState)")
 
-// Errors
-print("❌ 💥 Failed to save video: \(error.localizedDescription)")
+// Data model updates
+print("📊 ⚡️ Model updated: \(changes)")
 ```
 
-### Context Guidelines
-- Always include relevant identifiers (filenames, IDs) in logs
-- For errors, include both the error description and any relevant state
-- Use consistent terminology within each component
-- Keep logs concise but informative
-
-### Performance Considerations
-- Avoid expensive string interpolation in production builds
-- Consider using conditional compilation for verbose logs:
+### 2. Asynchronous Operations
+Log the full lifecycle of async operations to track their progress:
 ```swift
-#if DEBUG
-    print("📼 📊 Debug details: \(expensiveOperation())")
-#endif
+// Operation start
+print("🔄 🎬 Starting async operation: \(operationId)")
+
+// Progress/state changes
+print("🔄 📊 Operation \(operationId) progress: \(progress)%")
+
+// Completion (success/failure)
+print("🔄 ✅ Operation \(operationId) completed successfully")
+print("❌ 💥 Operation \(operationId) failed: \(error)")
 ```
 
-## 3. Integration with System Logger
-
-While we use print statements with emojis for development visibility, we also maintain integration with Apple's unified logging system through AppLogger:
-
+### 3. External Service Interactions
+Track all interactions with external services:
 ```swift
-// System logging for errors
-AppLogger.error(AppLogger.service, error)
+// Requests
+print("📤 🎬 Sending request to \(service): \(requestId)")
 
-// Debug logging
-AppLogger.service.debug("Operation completed")
+// Responses
+print("📤 ✅ Received response for \(requestId)")
+print("❌ 🚫 Request \(requestId) failed: \(statusCode)")
 ```
 
-## 4. Best Practices
-
-1. **Consistency**
-   - Always use both emojis (component + operation)
-   - Maintain consistent emoji usage within each component
-   - Use the same format for similar operations
-
-2. **Clarity**
-   - Make logs easily scannable in console
-   - Include relevant context but avoid verbosity
-   - Use clear, action-oriented descriptions
-
-3. **Error Handling**
-   - Always log errors with both emojis and description
-   - Include stack traces for serious errors
-   - Log both the error and the state that caused it
-
-4. **State Transitions**
-   - Log important state changes
-   - Include before/after values when relevant
-   - Mark the completion of significant operations
-
-## 5. Example Sequences
-
-### Video Recording Flow
+### 4. Resource Management
+Monitor resource allocation and cleanup:
 ```swift
-print("📸 🎬 Toggle recording called, current state: \(isRecording)")
-print("📸 ▶️ Starting recording...")
-print("📸 📹 Recording started, will save to: \(path)")
-print("📸 ⏹️ Stopping recording...")
-print("📸 💾 Recording stopped, file at: \(path)")
+// Resource allocation
+print("📸 🎬 Initializing camera session")
+print("💾 📁 Creating temporary file at: \(path)")
+
+// Resource cleanup
+print("📸 🧹 Releasing camera session")
+print("💾 🗑️ Cleaning up temp files")
 ```
 
-### Upload Flow
+### 5. Critical User Actions
+Log important user interactions that trigger significant operations:
 ```swift
-print("📤 📤 Starting upload process")
-print("📤 🔑 Verifying authentication...")
-print("📤 📊 Upload progress: 45%")
-print("📤 ✅ Upload completed successfully")
+// Action initiation
+print("👆 🎬 User initiated \(action)")
+
+// Action completion
+print("👆 ✅ User action completed: \(result)")
 ```
 
-### Error Handling
+## Strategic Logging Approach
+
+### 1. Breadcrumb Trail
+Leave a clear trail of execution flow:
+- Log entry and exit points of complex operations
+- Track decision points and condition evaluations
+- Note when expectations are met or violated
+
+### 2. State Verification
+Regularly verify and log system state:
+- Check resource availability before use
+- Validate data integrity at key points
+- Confirm proper cleanup after operations
+
+### 3. Error Recovery Points
+Mark potential recovery points in the code:
+- Log state before risky operations
+- Track cleanup attempts after failures
+- Note successful recovery steps
+
+### 4. Performance Monitoring
+Track timing of critical operations:
 ```swift
-print("❌ 💥 Failed to save video: \(error)")
-print("❌ 🔒 Upload failed: User not authenticated")
-print("❌ 🚫 Invalid file format")
-``` 
+print("⏱️ 🎬 Starting operation at: \(startTime)")
+// ... operation ...
+print("⏱️ 📊 Operation took: \(duration)ms")
+```
+
+### 5. Memory Management
+Monitor memory-critical operations:
+```swift
+print("📊 💾 Current memory usage: \(usage)MB")
+print("📊 ⚠️ Memory threshold reached, initiating cleanup")
+```
+
+## Implementation Best Practices
+
+### 1. Consistent Format
+Each log should include:
+- Component identifier (emoji)
+- Operation type (emoji)
+- Clear, descriptive message
+- Relevant state/data
+- Timestamp (when needed)
+
+### 2. Log Levels
+Use appropriate logging levels:
+- Debug: Detailed flow information
+- Info: Normal operation events
+- Warning: Potential issues
+- Error: Operation failures
+- Critical: System-wide issues
+
+### 3. Context Preservation
+Include sufficient context:
+```swift
+print("📸 📊 Operation failed - Context:")
+print("  - Current state: \(state)")
+print("  - Last successful operation: \(lastOp)")
+print("  - Resource status: \(resources)")
+```
+
+### 4. Recovery Information
+Include information needed for recovery:
+```swift
+print("❌ 💥 Operation failed, recovery options:")
+print("  - Retry count: \(retries)")
+print("  - Fallback path: \(fallback)")
+print("  - Cleanup needed: \(cleanup)")
+```
+
+## Key Points to Remember
+
+1. **Log for Your Future Self**
+   - Assume you won't remember the context
+   - Include all information needed to understand the situation
+   - Make logs searchable and meaningful
+
+2. **Log for Time Pressure**
+   - Make critical issues immediately visible
+   - Include enough context to quickly identify problems
+   - Group related logs logically
+
+3. **Log for Recovery**
+   - Include state information needed to recover
+   - Log cleanup and retry attempts
+   - Track resource allocation and release
+
+4. **Log for Clarity**
+   - Use consistent patterns
+   - Make log messages self-explanatory
+   - Include relevant IDs and timestamps
+
+Remember: When in doubt, log more rather than less. You can always filter logs, but you can't recover information that wasn't logged.

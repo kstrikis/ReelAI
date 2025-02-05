@@ -183,6 +183,23 @@ This approach meets our immediate need to demonstrate a meme video creation tool
   - Home (center-right)
   - Menu (rightmost)
 - Fixed camera orientation by setting videoRotationAngle to 90 degrees
+- Standardized Firestore logging:
+  - All database operations must use dedicated logging functions (dbEntry, dbSuccess, etc.)
+  - Each log must include collection context
+  - Removed generic methodEntry/Exit usage for database operations
+  - Added comprehensive logging for all Firestore operations in FirestoreService
+- Implemented comprehensive logging system:
+  - Strategic logging at critical points:
+    - State transitions (view lifecycle, user sessions, data models)
+    - Asynchronous operation lifecycles
+    - External service interactions
+    - Resource management (allocation and cleanup)
+    - Critical user actions
+  - Breadcrumb trail approach for complex operations
+  - Context preservation for debugging under time pressure
+  - Recovery information in error logs
+  - Performance and memory monitoring
+  - Consistent formatting with component and operation identifiers
 - Camera improvements:
   - Using front camera by default
   - Added camera flip button

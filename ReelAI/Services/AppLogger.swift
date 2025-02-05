@@ -134,3 +134,45 @@ struct AppLogger {
         }
     }
 #endif
+
+extension AppLogger {
+    // Emoji categories for print statements
+    static let uiEmoji = "🖼️"
+    static let cameraEmoji = "📸"
+    static let videoEmoji = "📼"
+    static let uploadEmoji = "📤"
+    
+    // Firestore categories
+    static let dbEmoji = "🔥" // Firestore operations
+    static let authEmoji = "🔑" // Authentication
+    static let profileEmoji = "👤" // User profile operations
+    
+    static func dbEntry(_ message: String, collection: String? = nil) {
+        print("🔥 📝 \(collection ?? ""): \(message)")
+    }
+    
+    static func dbSuccess(_ message: String, collection: String? = nil) {
+        print("🔥 ✅ \(collection ?? ""): \(message)")
+    }
+    
+    static func dbError(_ message: String, error: Error, collection: String? = nil) {
+        print("🔥 ❌ \(collection ?? ""): \(message)")
+        print("🔥 💥 Error details: \(error.localizedDescription)")
+    }
+    
+    static func dbQuery(_ message: String, collection: String) {
+        print("🔥 🔍 \(collection): \(message)")
+    }
+    
+    static func dbWrite(_ message: String, collection: String) {
+        print("🔥 💾 \(collection): \(message)")
+    }
+    
+    static func dbUpdate(_ message: String, collection: String) {
+        print("🔥 ⚡️ \(collection): \(message)")
+    }
+    
+    static func dbDelete(_ message: String, collection: String) {
+        print("🔥 🗑️ \(collection): \(message)")
+    }
+}

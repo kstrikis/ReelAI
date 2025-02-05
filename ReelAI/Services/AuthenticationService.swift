@@ -160,6 +160,14 @@ final class AuthenticationService: ObservableObject {
 
     // MARK: - User Profile Methods
 
+    /// Updates the local user profile
+    /// - Parameter profile: The new profile to set
+    func updateLocalProfile(_ profile: UserProfile) {
+        AppLogger.methodEntry(AppLogger.auth)
+        userProfile = profile
+        AppLogger.methodExit(AppLogger.auth)
+    }
+
     /// Fetches the user's profile from Firestore
     /// - Parameter userId: The user's Firebase Auth UID
     private func fetchUserProfile(userId: String) {

@@ -3,6 +3,8 @@ import PhotosUI
 import Combine
 import AVKit
 import FirebaseAuth
+import FirebaseFirestore
+import FirebaseStorage
 
 struct PublishingView: View {
     @EnvironmentObject private var authService: AuthenticationService
@@ -139,6 +141,7 @@ class PublishingViewModel: ObservableObject {
     @Published var showingSuccess = false
     
     private var uploadCancellable: AnyCancellable?
+    private var cancellables = Set<AnyCancellable>()
     
     var canUpload: Bool {
         !title.isEmpty && selectedVideo != nil
@@ -192,15 +195,68 @@ class PublishingViewModel: ObservableObject {
                 switch state {
                 case let .progress(progress):
                     self.uploadProgress = progress
-                case .completed:
-                    self.isUploading = false
-                    self.showingSuccess = true
+                case let .completed(storageRef):
+                    // After successful upload to Storage, save metadata to Firestore
+                    self.saveVideoMetadata(storageRef: storageRef, userId: userId)
                 case let .failure(error):
                     self.isUploading = false
                     self.errorMessage = error.localizedDescription
                     self.showingError = true
                 }
             }
+    }
+    
+    private func saveVideoMetadata(storageRef: StorageReference, userId: String) {
+        AppLogger.dbEntry("Saving video metadata to Firestore", collection: "videos")
+        
+        // Get the download URL from the storage reference
+        storageRef.downloadURL { [weak self] url, error in
+            guard let self = self else { return }
+            
+            if let error = error {
+                AppLogger.dbError("Failed to get download URL", error: error, collection: "videos")
+                self.errorMessage = "Failed to get video URL: \(error.localizedDescription)"
+                self.showingError = true
+                self.isUploading = false
+                return
+            }
+            
+            guard let downloadURL = url?.absoluteString else {
+                AppLogger.dbError("Download URL is nil", error: NSError(domain: "", code: -1), collection: "videos")
+                self.errorMessage = "Failed to get video URL"
+                self.showingError = true
+                self.isUploading = false
+                return
+            }
+            
+            // Save to Firestore
+            FirestoreService.shared.createVideo(
+                title: self.title,
+                description: self.description,
+                mediaUrl: downloadURL,
+                userId: userId,
+                username: Auth.auth().currentUser?.displayName ?? "unknown"
+            )
+            .receive(on: DispatchQueue.main)
+            .sink(
+                receiveCompletion: { [weak self] completion in
+                    guard let self = self else { return }
+                    self.isUploading = false
+                    
+                    if case let .failure(error) = completion {
+                        AppLogger.dbError("Failed to save video metadata", error: error, collection: "videos")
+                        self.errorMessage = "Failed to save video details: \(error.localizedDescription)"
+                        self.showingError = true
+                    }
+                },
+                receiveValue: { [weak self] _ in
+                    guard let self = self else { return }
+                    AppLogger.dbSuccess("Video metadata saved successfully", collection: "videos")
+                    self.showingSuccess = true
+                }
+            )
+            .store(in: &self.cancellables)
+        }
     }
     
     func cancelUpload() {
