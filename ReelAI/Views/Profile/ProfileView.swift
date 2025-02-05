@@ -11,99 +11,103 @@ struct ProfileView: View {
     @State private var errorMessage: String?
 
     var body: some View {
-        ZStack {
-            // Background
-            Color.black.ignoresSafeArea()
+        NavigationView {
+            ZStack {
+                // Background
+                Color.black.ignoresSafeArea()
 
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(spacing: 20) {
-                    // Profile Image (placeholder for now)
-                    Circle()
-                        .fill(Color.gray.opacity(0.3))
-                        .frame(width: 100, height: 100)
-                        .overlay(
-                            Image(systemName: "person.fill")
-                                .resizable()
-                                .scaledToFit()
-                                .foregroundColor(.white)
-                                .padding(25)
-                        )
-                        .padding(.top, 20)
-
-                    if isEditing {
-                        // Edit Mode
-                        VStack(spacing: 15) {
-                            CustomTextField(
-                                placeholder: "Display Name",
-                                text: $displayName
+                ScrollView(.vertical, showsIndicators: false) {
+                    VStack(spacing: 20) {
+                        // Profile Image (placeholder for now)
+                        Circle()
+                            .fill(Color.gray.opacity(0.3))
+                            .frame(width: 100, height: 100)
+                            .overlay(
+                                Image(systemName: "person.fill")
+                                    .resizable()
+                                    .scaledToFit()
+                                    .foregroundColor(.white)
+                                    .padding(25)
                             )
+                            .padding(.top, 20)
 
-                            CustomTextField(
-                                placeholder: "Username",
-                                text: $username,
-                                autocapitalizeNone: true
-                            )
+                        if isEditing {
+                            // Edit Mode
+                            VStack(spacing: 15) {
+                                CustomTextField(
+                                    placeholder: "Display Name",
+                                    text: $displayName
+                                )
 
-                            if let errorMessage {
-                                Text(errorMessage)
-                                    .foregroundColor(.red)
-                                    .font(.caption)
-                            }
+                                CustomTextField(
+                                    placeholder: "Username",
+                                    text: $username,
+                                    autocapitalizeNone: true
+                                )
 
-                            Button(action: saveProfile, label: {
-                                if isLoading {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                } else {
-                                    Text("Save Changes")
-                                        .fontWeight(.semibold)
+                                if let errorMessage {
+                                    Text(errorMessage)
+                                        .foregroundColor(.red)
+                                        .font(.caption)
                                 }
-                            })
-                            .buttonStyle(PrimaryButtonStyle())
-                            .disabled(isLoading)
-                        }
-                        .padding(.horizontal)
-                    } else {
-                        // View Mode
-                        VStack(spacing: 10) {
-                            Text(authService.userProfile?.displayName ?? "No Name")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundColor(.white)
 
-                            Text("@\(authService.userProfile?.username ?? "unknown")")
-                                .font(.subheadline)
-                                .foregroundColor(.gray)
+                                Button(action: saveProfile, label: {
+                                    if isLoading {
+                                        ProgressView()
+                                            .tint(.white)
+                                    } else {
+                                        Text("Save Changes")
+                                            .fontWeight(.semibold)
+                                    }
+                                })
+                                .buttonStyle(PrimaryButtonStyle())
+                                .disabled(isLoading)
+                            }
+                            .padding(.horizontal)
+                        } else {
+                            // View Mode
+                            VStack(spacing: 10) {
+                                Text(authService.userProfile?.displayName ?? "No Name")
+                                    .font(.title2)
+                                    .fontWeight(.bold)
+                                    .foregroundColor(.white)
 
-                            if let email = authService.userProfile?.email {
-                                Text(email)
+                                Text("@\(authService.userProfile?.username ?? "unknown")")
                                     .font(.subheadline)
                                     .foregroundColor(.gray)
+
+                                if let email = authService.userProfile?.email {
+                                    Text(email)
+                                        .font(.subheadline)
+                                        .foregroundColor(.gray)
+                                }
                             }
                         }
+
+                        Spacer(minLength: 0)
                     }
-
-                    Spacer(minLength: 0)
+                    .padding(.horizontal)
                 }
-                .padding(.horizontal)
             }
-        }
-        .navigationTitle("Profile")
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarLeading) {
-                Button(action: { dismiss() }, label: {
-                    Text("Done")
-                        .foregroundColor(.blue)
-                })
-            }
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button(action: { dismiss() }, label: {
+                        Text("Done")
+                            .foregroundColor(.white)
+                    })
+                }
 
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button(action: toggleEditMode, label: {
-                    Text(isEditing ? "Cancel" : "Edit")
-                        .foregroundColor(.blue)
-                })
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: toggleEditMode, label: {
+                        Text(isEditing ? "Cancel" : "Edit")
+                            .foregroundColor(.white)
+                    })
+                }
             }
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
         }
         .onAppear(perform: setupInitialValues)
     }
