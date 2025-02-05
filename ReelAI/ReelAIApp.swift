@@ -9,6 +9,7 @@ import FirebaseAnalytics
 import FirebaseAuth
 import FirebaseCore
 import FirebaseCrashlytics
+import FirebaseStorage
 import SwiftUI
 
 class AppDelegate: NSObject, UIApplicationDelegate {

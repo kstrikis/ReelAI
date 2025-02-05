@@ -78,9 +78,76 @@ final class AuthenticationService: ObservableObject {
 
                 if let user = auth {
                     AppLogger.debug("👤 User signed in: \(user.uid)")
+                    print("👤 Firebase auth state changed - User signed in: \(user.uid)")
                     authState = .signedIn(user)
-                    fetchUserProfile(userId: user.uid) // Fetch profile when signed in
+                    
+                    // Create a robust profile fetch
+                    database.collection("users").document(user.uid)
+                        .snapshotPublisher()
+                        .receive(on: DispatchQueue.main)
+                        .sink { completion in
+                            if case let .failure(error) = completion {
+                                print("❌ Failed to fetch user profile: \(error.localizedDescription)")
+                                print("⚠️ Using local default profile due to network error")
+                                AppLogger.error(AppLogger.auth, error, context: "Fetch user profile")
+                                
+                                // Create and set a local profile immediately
+                                if self.userProfile == nil {
+                                    let defaultProfile = UserProfile(
+                                        username: "user\(user.uid.prefix(6))",
+                                        displayName: "New User",
+                                        email: user.email
+                                    )
+                                    self.userProfile = defaultProfile
+                                    print("✅ Local default profile created")
+                                }
+                            }
+                        } receiveValue: { [weak self] snapshot in
+                            if snapshot.exists {
+                                if let profile = try? snapshot.data(as: UserProfile.self) {
+                                    self?.userProfile = profile
+                                    print("✅ User profile loaded successfully:")
+                                    print("  - Username: \(profile.username)")
+                                    print("  - Display Name: \(profile.displayName)")
+                                    AppLogger.debug("👤 User profile fetched: \(profile.displayName)")
+                                } else {
+                                    print("❌ Failed to decode user profile data")
+                                    print("📄 Raw data: \(String(describing: snapshot.data()))")
+                                }
+                            } else {
+                                print("⚠️ No profile document exists for user: \(user.uid)")
+                                print("👤 Creating default profile...")
+                                
+                                // Create and set default profile IMMEDIATELY
+                                let defaultProfile = UserProfile(
+                                    username: "user\(user.uid.prefix(6))",
+                                    displayName: "New User",
+                                    email: user.email
+                                )
+                                
+                                // Set it locally right away
+                                self?.userProfile = defaultProfile
+                                print("✅ Local default profile created")
+                                
+                                // Then try to save it to Firestore
+                                self?.updateProfile(defaultProfile)
+                                    .sink(
+                                        receiveCompletion: { completion in
+                                            if case let .failure(error) = completion {
+                                                print("⚠️ Failed to save default profile to Firestore: \(error.localizedDescription)")
+                                                print("ℹ️ Will retry on next connection")
+                                            } else {
+                                                print("✅ Default profile saved to Firestore")
+                                            }
+                                        },
+                                        receiveValue: { _ in }
+                                    )
+                                    .store(in: &self!.cancellables)
+                            }
+                        }
+                        .store(in: &cancellables)
                 } else {
+                    print("👤 Firebase auth state changed - User signed out")
                     AppLogger.debug("👤 User signed out")
                     authState = .signedOut
                     userProfile = nil // Clear profile when signed out
@@ -291,34 +358,44 @@ final class AuthenticationService: ObservableObject {
     /// - Returns: A publisher that emits the signed-in demo user or an error
     func signInAsDemo() -> AnyPublisher<User, Error> {
         AppLogger.methodEntry(AppLogger.auth)
+        print("🎭 Starting demo sign in process...")
 
         // Using a fixed demo account for simplicity
-        // In production, you might want to use a pool of demo accounts or generate temporary ones
         return signIn(email: "demo@example.com", password: "demo123")
-            .handleEvents(receiveOutput: { [weak self] user in
-                AppLogger.debug("🎭 Demo user signed in successfully")
-
-                // Create demo profile if it doesn't exist
+            .flatMap { user -> AnyPublisher<User, Error> in
+                print("🎭 Demo user authenticated successfully")
+                print("🎭 Creating/updating demo profile...")
+                
+                // Create demo profile
                 let profile = UserProfile(
                     username: "demo",
                     displayName: "Demo User",
                     email: user.email,
-                    profileImageUrl: nil // Could add a default demo avatar URL here
+                    profileImageUrl: nil
                 )
-
-                self?.updateProfile(profile)
-                    .sink(
-                        receiveCompletion: { completion in
-                            if case let .failure(error) = completion {
-                                AppLogger.error(AppLogger.auth, error, context: "Demo sign in - create profile")
-                            }
-                        },
-                        receiveValue: { _ in
-                            AppLogger.debug("🎭 Demo user profile created/updated")
-                        }
-                    )
-                    .store(in: &self!.cancellables)
+                
+                // Return a publisher that completes only when both auth and profile are done
+                return self.updateProfile(profile)
+                    .map { _ -> User in
+                        print("🎭 Demo profile created/updated successfully")
+                        return user
+                    }
+                    .catch { error -> AnyPublisher<User, Error> in
+                        print("⚠️ Failed to create demo profile: \(error.localizedDescription)")
+                        print("⚠️ Continuing with auth only...")
+                        // Even if profile fails, return the authenticated user
+                        return Just(user)
+                            .setFailureType(to: Error.self)
+                            .eraseToAnyPublisher()
+                    }
+                    .eraseToAnyPublisher()
+            }
+            .handleEvents(receiveOutput: { user in
+                print("✅ Demo sign in completed successfully")
+                print("  - User ID: \(user.uid)")
+                print("  - Email: \(user.email ?? "none")")
             })
+            .receive(on: DispatchQueue.main)
             .eraseToAnyPublisher()
     }
 
