@@ -11,6 +11,7 @@ import FirebaseCore
 import FirebaseCrashlytics
 import FirebaseStorage
 import SwiftUI
+import Photos
 
 class AppDelegate: NSObject, UIApplicationDelegate {
     func application(
@@ -19,6 +20,22 @@ class AppDelegate: NSObject, UIApplicationDelegate {
     ) -> Bool {
         AppLogger.methodEntry(AppLogger.auth)
         FirebaseApp.configure()
+        
+        // Block until we get both Photos permissions
+        let semaphore = DispatchSemaphore(value: 0)
+        
+        // First request addOnly permission
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            print("📱 Photos add permission result: \(status.rawValue)")
+            
+            // Then request readWrite permission
+            PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
+                print("📱 Photos readWrite permission result: \(status.rawValue)")
+                semaphore.signal()
+            }
+        }
+        semaphore.wait()
+        
         AppLogger.methodExit(AppLogger.auth)
         return true
     }

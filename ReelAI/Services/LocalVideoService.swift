@@ -2,110 +2,171 @@ import Foundation
 import Combine
 import AVFoundation
 import UIKit
+import Photos
 
 class LocalVideoService {
     static let shared = LocalVideoService()
     
     private init() {
-        AppLogger.methodEntry(AppLogger.service)
-        createVideoDirectory()
-        AppLogger.methodExit(AppLogger.service)
+        print("📼 🎬 Initializing LocalVideoService")
+        print("📼 ✅ LocalVideoService initialized")
     }
-    
-    // MARK: - Directory Management
-    
-    private var videosDirectory: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Videos", isDirectory: true)
-    }
-    
-    private func createVideoDirectory() {
-        AppLogger.methodEntry(AppLogger.service)
-        do {
-            try FileManager.default.createDirectory(at: self.videosDirectory, 
-                                                  withIntermediateDirectories: true)
-            AppLogger.service.debug("Created videos directory at \(self.videosDirectory.path)")
-        } catch {
-            AppLogger.error(AppLogger.service, error)
-        }
-        AppLogger.methodExit(AppLogger.service)
-    }
-    
-    // MARK: - Video Management
     
     func saveVideo(from tempURL: URL) -> AnyPublisher<URL, Error> {
-        AppLogger.methodEntry(AppLogger.service)
-        return Future<URL, Error> { [self] promise in
-            let filename = "\(UUID().uuidString).mp4"
-            let destinationURL = self.videosDirectory.appendingPathComponent(filename)
+        print("📼 💾 Starting video save operation")
+        
+        return Future<URL, Error> { promise in
+            // Verify the temp file exists and is readable
+            guard FileManager.default.fileExists(atPath: tempURL.path) else {
+                print("❌ 🚫 Temp file not accessible: \(tempURL.path)")
+                promise(.failure(NSError(domain: "LocalVideoService", code: -1,
+                                      userInfo: [NSLocalizedDescriptionKey: "Video file not accessible"])))
+                return
+            }
             
-            do {
-                try FileManager.default.copyItem(at: tempURL, to: destinationURL)
-                AppLogger.service.debug("Saved video to \(destinationURL.path)")
-                promise(.success(destinationURL))
-            } catch {
-                AppLogger.error(AppLogger.service, error)
-                promise(.failure(error))
+            // Function to attempt save with retry
+            func attemptSave(retryCount: Int = 0, maxRetries: Int = 3) {
+                print("📼 📝 Attempting to save video (attempt \(retryCount + 1)/\(maxRetries + 1))")
+                
+                Task {
+                    do {
+                        // First verify we can read the file
+                        let videoData = try Data(contentsOf: tempURL, options: .alwaysMapped)
+                        print("📼 📊 Video file size: \(Double(videoData.count) / 1_000_000.0)MB")
+                        
+                        try await PHPhotoLibrary.shared().performChanges {
+                            print("📼 📝 Creating Photos asset...")
+                            let request = PHAssetCreationRequest.forAsset()
+                            request.addResource(with: .video, fileURL: tempURL, options: nil)
+                        }
+                        print("📼 ✅ Video saved to Photos")
+                        promise(.success(tempURL))
+                    } catch {
+                        print("❌ 💥 Save attempt \(retryCount + 1) failed: \(error.localizedDescription)")
+                        if let phError = error as? PHPhotosError {
+                            print("❌ 💥 Photos error code: \(phError.errorCode)")
+                        }
+                        
+                        // If we haven't maxed out retries, wait and try again
+                        if retryCount < maxRetries {
+                            print("📼 ⏳ Waiting before retry...")
+                            try? await Task.sleep(nanoseconds: 1_000_000_000) // 1 second delay
+                            attemptSave(retryCount: retryCount + 1, maxRetries: maxRetries)
+                        } else {
+                            promise(.failure(error))
+                        }
+                    }
+                }
+            }
+            
+            // Start first attempt after a short delay
+            Task {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second initial delay
+                attemptSave()
             }
         }
         .eraseToAnyPublisher()
     }
     
     func getAllVideos() -> [URL] {
-        AppLogger.methodEntry(AppLogger.service)
-        do {
-            let videoURLs = try FileManager.default.contentsOfDirectory(at: self.videosDirectory,
-                includingPropertiesForKeys: [.creationDateKey],
-                options: [.skipsHiddenFiles])
-                .filter { $0.pathExtension.lowercased() == "mp4" }
-                .sorted { url1, url2 in
-                    let date1 = try url1.resourceValues(forKeys: [.creationDateKey]).creationDate ?? Date.distantPast
-                    let date2 = try url2.resourceValues(forKeys: [.creationDateKey]).creationDate ?? Date.distantPast
-                    return date1 > date2
-                }
-            AppLogger.service.debug("Found \(videoURLs.count) videos")
-            return videoURLs
-        } catch {
-            AppLogger.error(AppLogger.service, error)
-            return []
+        print("📼 🔍 Fetching videos from Photos")
+        
+        let options = PHFetchOptions()
+        options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
+        options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
+        
+        let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
+        print("📼 📊 Found \(fetchResult.count) videos in Photos")
+        
+        var videoURLs: [URL] = []
+        let dispatchGroup = DispatchGroup()
+        
+        fetchResult.enumerateObjects { asset, _, _ in
+            dispatchGroup.enter()
+            let options = PHVideoRequestOptions()
+            options.version = .current
+            options.deliveryMode = .highQualityFormat
+            
+            PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
+                defer { dispatchGroup.leave() }
+                guard let urlAsset = avAsset as? AVURLAsset else { return }
+                videoURLs.append(urlAsset.url)
+            }
         }
+        
+        dispatchGroup.wait()
+        print("📼 ✅ Retrieved \(videoURLs.count) video URLs")
+        return videoURLs
     }
     
     func deleteVideo(at url: URL) -> AnyPublisher<Void, Error> {
-        AppLogger.methodEntry(AppLogger.service)
+        print("📼 🗑️ Attempting to delete video")
+        
         return Future<Void, Error> { promise in
-            do {
-                try FileManager.default.removeItem(at: url)
-                AppLogger.service.debug("Deleted video at \(url.path)")
-                promise(.success(()))
-            } catch {
-                AppLogger.error(AppLogger.service, error)
-                promise(.failure(error))
+            // Find the PHAsset that corresponds to this URL
+            let options = PHFetchOptions()
+            options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
+            
+            let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
+            var assetToDelete: PHAsset?
+            
+            fetchResult.enumerateObjects { asset, _, stop in
+                let dispatchGroup = DispatchGroup()
+                dispatchGroup.enter()
+                
+                PHImageManager.default().requestAVAsset(forVideo: asset, options: nil) { avAsset, _, _ in
+                    defer { dispatchGroup.leave() }
+                    if let urlAsset = avAsset as? AVURLAsset, urlAsset.url == url {
+                        assetToDelete = asset
+                        stop.pointee = true
+                    }
+                }
+                
+                dispatchGroup.wait()
+            }
+            
+            guard let asset = assetToDelete else {
+                print("❌ 🚫 Could not find video in Photos library")
+                promise(.failure(NSError(domain: "LocalVideoService", 
+                                      code: -1, 
+                                      userInfo: [NSLocalizedDescriptionKey: "Video not found"])))
+                return
+            }
+            
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.deleteAssets([asset] as NSFastEnumeration)
+                print("📼 🗑️ Deleting video from Photos...")
+            } completionHandler: { success, error in
+                if success {
+                    print("📼 ✅ Video deleted successfully")
+                    promise(.success(()))
+                } else {
+                    print("❌ 💥 Failed to delete video: \(error?.localizedDescription ?? "Unknown error")")
+                    promise(.failure(error ?? NSError(domain: "LocalVideoService", 
+                                                    code: -1, 
+                                                    userInfo: [NSLocalizedDescriptionKey: "Failed to delete video"])))
+                }
             }
         }
         .eraseToAnyPublisher()
     }
     
     func generateThumbnail(for videoURL: URL) -> AnyPublisher<UIImage?, Never> {
-        AppLogger.methodEntry(AppLogger.service)
+        print("📼 🖼️ Starting thumbnail generation for \(videoURL.lastPathComponent)")
         return Future<UIImage?, Never> { promise in
-            let asset = AVURLAsset(url: videoURL)
-            let imageGenerator = AVAssetImageGenerator(asset: asset)
-            imageGenerator.appliesPreferredTrackTransform = true
-            
-            imageGenerator.generateCGImageAsynchronously(for: .zero) { cgImage, _, error in
-                if let error {
-                    AppLogger.error(AppLogger.service, error)
-                    promise(.success(nil))
-                    return
-                }
+            Task {
+                let asset = AVURLAsset(url: videoURL)
+                let imageGenerator = AVAssetImageGenerator(asset: asset)
+                imageGenerator.appliesPreferredTrackTransform = true
+                imageGenerator.maximumSize = CGSize(width: 300, height: 300)
                 
-                if let cgImage {
+                do {
+                    let cgImage = try await imageGenerator.image(at: .zero).image
                     let thumbnail = UIImage(cgImage: cgImage)
-                    AppLogger.service.debug("Generated thumbnail for \(videoURL.lastPathComponent)")
+                    print("📼 ✅ Generated thumbnail")
                     promise(.success(thumbnail))
-                } else {
-                    AppLogger.service.debug("Failed to generate thumbnail")
+                } catch {
+                    print("❌ 💥 Failed to generate thumbnail: \(error.localizedDescription)")
                     promise(.success(nil))
                 }
             }

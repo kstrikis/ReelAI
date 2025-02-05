@@ -87,77 +87,80 @@ final class CameraViewModel {
     }
 
     func stopCamera() {
-        AppLogger.methodEntry(AppLogger.ui)
+        print("📸 🛑 Stopping camera session")
         cameraManager.stopSession()
-        AppLogger.methodExit(AppLogger.ui)
+        print("📸 ✅ Camera session stopped")
     }
 
     func toggleRecording() async {
-        AppLogger.methodEntry(AppLogger.ui)
-        print("🎥 Toggle recording called, current state: \(isRecording)")
+        print("📸 🎬 Toggle recording called, current state: \(isRecording)")
 
         do {
             if isRecording {
-                print("🎥 Stopping recording...")
+                print("📸 ⏹️ Stopping recording...")
                 // Stop recording
-                recordingURL = try await cameraManager.stopRecording()
+                let tempURL = try await cameraManager.stopRecording()
                 isRecording = false
-                print("🎥 Recording stopped, file at: \(recordingURL?.path ?? "nil")")
+                print("📸 💾 Recording stopped, file at: \(tempURL.path)")
 
-                // Upload the video
-                print("🎥 Starting upload process...")
-                await uploadVideo()
+                // Save to local storage
+                print("📸 📝 Saving to local storage...")
+                let persistentURL = try await localVideoService.saveVideo(from: tempURL).async()
+                print("📸 ✅ Video saved to: \(persistentURL.path)")
+                
+                // Clean up temp file
+                try? FileManager.default.removeItem(at: tempURL)
+                print("📸 🧹 Cleaned up temporary file")
+                
             } else {
-                print("🎥 Starting recording...")
+                print("📸 ▶️ Starting recording...")
                 // Start recording
                 recordingURL = try await cameraManager.startRecording()
                 isRecording = true
-                print("🎥 Recording started, will save to: \(recordingURL?.path ?? "nil")")
+                print("📸 📹 Recording started, will save to: \(recordingURL?.path ?? "nil")")
             }
             errorMessage = nil
         } catch {
-            print("❌ Recording error: \(error.localizedDescription)")
+            print("❌ 💥 Recording error: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
             AppLogger.error(AppLogger.ui, error)
         }
-
-        AppLogger.methodExit(AppLogger.ui)
     }
 
     private func uploadVideo() async {
-        AppLogger.methodEntry(AppLogger.ui)
+        print("📸 📤 Starting video upload process")
 
         guard let tempURL = recordingURL else {
-            print("❌ Upload failed: No video URL available")
+            print("❌ 🚫 Upload failed: No video URL available")
             errorMessage = "No video to upload"
             return
         }
-        print("📤 Temporary video file location: \(tempURL.path)")
+        print("📸 📁 Temporary video file location: \(tempURL.path)")
 
         isUploading = true
-        print("📤 Upload state set to true")
+        print("📸 ⚙️ Upload state set to true")
 
         // First check Firebase auth state
         guard let userId = authService.currentUser?.uid else {
-            print("❌ Upload failed: No Firebase user found")
-            print("📤 Auth state: \(String(describing: authService.currentUser))")
+            print("❌ 🔒 Upload failed: No Firebase user found")
+            print("📸 🔑 Auth state: \(String(describing: authService.currentUser))")
             errorMessage = "Not signed in"
             isUploading = false
             return
         }
 
         // Save to persistent storage first
-        print("📤 Saving video to persistent storage...")
+        print("�� 📝 Saving video to persistent storage...")
         do {
             let persistentURL = try await localVideoService.saveVideo(from: tempURL).async()
-            print("✅ Video saved to persistent storage at: \(persistentURL.path)")
+            print("📸 ✅ Video saved to persistent storage at: \(persistentURL.path)")
             
             // Clean up the temporary file
             try FileManager.default.removeItem(at: tempURL)
-            print("✅ Temporary file deleted successfully")
+            print("📸 🧹 Cleaned up temporary file")
             recordingURL = persistentURL
         } catch {
-            print("❌ Failed to save video to persistent storage: \(error.localizedDescription)")
+            print("❌ 💥 Failed to save video to persistent storage: \(error.localizedDescription)")
             errorMessage = "Failed to save video"
             isUploading = false
             return
@@ -165,30 +168,30 @@ final class CameraViewModel {
 
         // Then check user profile separately with retry logic
         if authService.userProfile == nil {
-            print("📤 User profile not loaded, attempting to load...")
-            print("📤 Waiting for profile to load (max 5 seconds)...")
+            print("📸 📤 User profile not loaded, attempting to load...")
+            print("📸 📤 Waiting for profile to load (max 5 seconds)...")
 
             // Wait for up to 5 seconds for the profile to load
             for _ in 0 ..< 10 {
                 if authService.userProfile != nil { break }
                 try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
-                print("📤 Still waiting for profile...")
+                print("📸 📤 Still waiting for profile...")
             }
         }
 
         guard let username = authService.userProfile?.username else {
-            print("❌ Upload failed: Could not load user profile")
-            print("📤 Firebase UID: \(userId)")
-            print("📤 Profile state: \(String(describing: authService.userProfile))")
-            print("📤 Please try again or check your connection")
+            print("❌ 🔒 Upload failed: Could not load user profile")
+            print("📸 🔑 Firebase UID: \(userId)")
+            print("📸 🔑 Profile state: \(String(describing: authService.userProfile))")
+            print("📸 🔑 Please try again or check your connection")
             errorMessage = "Could not load profile. Please try again."
             isUploading = false
             return
         }
 
-        print("📤 Starting upload with userId: \(userId)")
-        print("📤 Username: \(username)")
-        print("📤 Auth details:")
+        print("📸 📤 Starting upload with userId: \(userId)")
+        print("📸 📤 Username: \(username)")
+        print("📸 📤 Auth details:")
         print("  - Firebase UID: \(userId)")
         print("  - Username: \(username)")
         print("  - Email: \(authService.userProfile?.email ?? "none")")
@@ -197,39 +200,39 @@ final class CameraViewModel {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] state in
                 guard let self else {
-                    print("⚠️ Self reference lost during upload")
+                    print("⚠️ 🔒 Self reference lost during upload")
                     return
                 }
 
                 switch state {
                 case let .progress(progress):
-                    print("🎥 Upload progress update received: \(String(format: "%.1f", progress * 100))%")
+                    print("�� 🎥 Upload progress update received: \(String(format: "%.1f", progress * 100))%")
 
                 case let .completed(ref):
-                    print("🎥 Upload completed successfully")
-                    print("🎥 Storage reference: \(ref.fullPath)")
-                    print("🎥 Creating Firestore metadata...")
+                    print("🎥 🎥 Upload completed successfully")
+                    print("🎥 🎥 Storage reference: \(ref.fullPath)")
+                    print("🎥 🎥 Creating Firestore metadata...")
 
                     // Create Firestore metadata
                     Task {
                         do {
-                            print("🎥 Calling VideoService.createVideo...")
+                            print("🎥 🎥 Calling VideoService.createVideo...")
                             let video = try await self.videoService.createVideo(
                                 userId: userId,
                                 username: username,
                                 rawVideoURL: ref.fullPath
                             ).async()
 
-                            print("🎥 Video metadata created successfully")
-                            print("🎥 Video ID: \(video.id ?? "unknown")")
-                            print("🎥 Raw video URL: \(video.rawVideoURL)")
+                            print("🎥 🎥 Video metadata created successfully")
+                            print("🎥 🎥 Video ID: \(video.id ?? "unknown")")
+                            print("🎥 🎥 Raw video URL: \(video.rawVideoURL)")
 
                             self.isUploading = false
-                            print("✅ Upload process completed successfully")
+                            print("✅ 🎥 Upload process completed successfully")
 
                         } catch {
-                            print("❌ Metadata creation failed: \(error.localizedDescription)")
-                            print("❌ Error details: \(error)")
+                            print("❌ 💥 Metadata creation failed: \(error.localizedDescription)")
+                            print("❌ 💥 Error details: \(error)")
                             self.errorMessage = error.localizedDescription
                             self.isUploading = false
                             AppLogger.error(AppLogger.ui, error)
@@ -237,12 +240,12 @@ final class CameraViewModel {
                     }
 
                 case let .failure(error):
-                    print("❌ Upload failed in CameraViewModel")
-                    print("❌ Error: \(error.localizedDescription)")
+                    print("❌ 💥 Upload failed in CameraViewModel")
+                    print("❌ 💥 Error: \(error.localizedDescription)")
                     if let nsError = error as NSError? {
-                        print("❌ Error domain: \(nsError.domain)")
-                        print("❌ Error code: \(nsError.code)")
-                        print("❌ User info: \(nsError.userInfo)")
+                        print("❌ 💥 Error domain: \(nsError.domain)")
+                        print("❌ 💥 Error code: \(nsError.code)")
+                        print("❌ 💥 User info: \(nsError.userInfo)")
                     }
                     errorMessage = error.localizedDescription
                     isUploading = false
@@ -251,7 +254,7 @@ final class CameraViewModel {
             }
             .store(in: &cancellables)
 
-        print("📤 Upload publisher subscription created")
+        print("📸 📊 Upload publisher subscription created")
         AppLogger.methodExit(AppLogger.ui)
     }
 }
@@ -350,12 +353,27 @@ struct CameraRecordingView: View {
             }
         }
         .ignoresSafeArea()
-        .sheet(isPresented: $showingGallery) {
+        .sheet(isPresented: $showingGallery, onDismiss: {
+            // Restart camera when returning from gallery
+            if isActive {
+                Task {
+                    await viewModel?.handleCameraPreviews()
+                }
+            }
+        }) {
             NavigationView {
-                GalleryView()
-                    .navigationBarItems(trailing: Button("Done") {
-                        showingGallery = false
-                    })
+                GalleryView(authService: authService)
+                    .toolbar {
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Button("Done") {
+                                showingGallery = false
+                            }
+                        }
+                    }
+            }
+            .onAppear {
+                // Stop camera when showing gallery
+                viewModel?.stopCamera()
             }
         }
         .onChange(of: isActive) { _, isNowActive in

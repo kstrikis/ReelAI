@@ -210,3 +210,37 @@ This approach meets our immediate need to demonstrate a meme video creation tool
 - Storing videos in Documents directory for persistence and backup
 - Using AVAssetImageGenerator for thumbnail generation
 - Gallery accessed via camera view to maintain better UX flow
+
+## Logging Standards
+- Each component uses a consistent first emoji as its "sheet" identifier:
+  - 📼 for LocalVideoService operations
+  - 🖼️ for Gallery/UI operations
+  - 📸 for Camera operations
+  - 📤 for Upload operations
+  - 🔄 for async/await conversions
+
+- Second emoji indicates specific operation type:
+  - 🎬 for initialization/setup
+  - 📁 for directory/file operations
+  - 💾 for saving operations
+  - 🔍 for search/fetch operations
+  - 🗑️ for deletion operations
+  - 🖼️ for thumbnail operations
+  - ⚙️ for configuration
+  - 📊 for progress/status
+  - ✅ for success
+  - 🔑 for authentication
+  - 📤 for upload operations
+  - 🛑 for stopping/cleanup
+
+- Error logging uses distinct patterns:
+  - ❌ 💥 for serious errors
+  - ❌ 🔒 for authentication errors
+  - ❌ 🚫 for validation/state errors
+  - ⚠️ for warnings
+
+Example:
+```swift
+print("📼 🎬 Initializing LocalVideoService")  // Component + Operation
+print("❌ 💥 Failed to save video: \(error)")   // Error pattern
+```
