@@ -12,8 +12,8 @@
   }  
   ```  
 - [ ] **1.3** – Add Google OAuth using `GIDSignIn` SDK (handle `GIDSignInDelegate` callbacks).  
-- [ ] **1.4** – Create `UserSession` class (ObservableObject) to track auth state via `Auth.auth().addStateDidChangeListener`.  
-- [ ] **1.5** – Write Firestore security rules to restrict user document writes to `request.auth.uid == resource.data.userId`.  
+- [x] **1.4** – Implemented auth state tracking in `AuthenticationService` using Combine's `authStateDidChangePublisher` and added Firestore user profiles.  
+- [x] **1.5** – Created Firestore security rules in `firestore.rules` to protect user data and enforce ownership-based access control.  
 
 ---
 
@@ -40,11 +40,17 @@
   struct Video: Codable {  
     @DocumentID var id: String?  
     let userId: String  
+    let username: String  // For URLs like reelai.example.com/@username/videoId
     let title: String  
     let muscleGroup: String // Week 1 niche: Fitness Creator  
     let difficulty: Int  
     @ServerTimestamp var createdAt: Date?  
     let processedURL: String  
+    
+    var shareURL: URL? {
+        guard let id = id else { return nil }
+        return URL(string: "https://reelai.example.com/@\(username)/\(id)")
+    }
   }  
   ```  
 

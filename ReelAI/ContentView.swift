@@ -9,39 +9,54 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject private var authService: AuthenticationService
-    
+    @State private var showingProfile = false
+    @State private var selectedTab = 1 // 0: Camera, 1: Home, 2: Menu
+
     var body: some View {
         NavigationView {
-            ZStack {
-                // Background
-                Color.black.ignoresSafeArea()
-                
-                VStack {
-                    Image(systemName: "globe")
-                        .imageScale(.large)
-                        .foregroundStyle(.white)
-                    Text("Hello, world!")
-                        .foregroundColor(.white)
-                    
-                    Spacer()
-                    
-                    Button(action: signOut) {
-                        Text("Sign Out")
-                            .fontWeight(.medium)
+            TabView(selection: $selectedTab) {
+                // Camera View (Left)
+                CameraRecordingView(isActive: selectedTab == 0)
+                    .ignoresSafeArea()
+                    .tag(0)
+
+                // Main Content (Center)
+                ZStack {
+                    Color.black.ignoresSafeArea()
+                    VStack {
+                        Image(systemName: "globe")
+                            .imageScale(.large)
+                            .foregroundStyle(.white)
+                        Text("Hello, world!")
+                            .foregroundColor(.white)
+                        Spacer()
                     }
-                    .buttonStyle(SecondaryButtonStyle())
-                    .padding(.bottom, 20)
+                    .padding()
                 }
-                .padding()
-                .navigationTitle("ReelAI")
-                .navigationBarTitleDisplayMode(.large)
-                .toolbarColorScheme(.dark, for: .navigationBar)
-                .toolbarBackground(.visible, for: .navigationBar)
-                .toolbarBackground(Color.black, for: .navigationBar)
+                .tag(1)
+
+                // Menu View (Right)
+                SideMenuView(isPresented: .constant(true))
+                    .tag(2)
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .navigationTitle("ReelAI")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(action: { showingProfile = true }, label: {
+                        Image(systemName: "person.circle")
+                            .foregroundColor(.white)
+                    })
+                }
+            }
+            .sheet(isPresented: $showingProfile) {
+                ProfileView()
             }
         }
     }
-    
+
     private func signOut() {
         AppLogger.methodEntry(AppLogger.ui)
         authService.signOut()
