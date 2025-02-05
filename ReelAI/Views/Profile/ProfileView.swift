@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseAuth
 
 struct ProfileView: View {
     @EnvironmentObject private var authService: AuthenticationService
@@ -131,8 +132,16 @@ struct ProfileView: View {
     }
 
     private func saveProfile() {
+        AppLogger.dbEntry("Starting profile update", collection: "users")
         isLoading = true
         errorMessage = nil
+
+        guard let userId = Auth.auth().currentUser?.uid else {
+            AppLogger.dbError("No authenticated user found", error: NSError(), collection: "users")
+            errorMessage = "Not authenticated"
+            isLoading = false
+            return
+        }
 
         // Create new profile with updated values
         let updatedProfile = UserProfile(
@@ -144,15 +153,27 @@ struct ProfileView: View {
         )
 
         // Update profile in Firestore
-        authService.updateProfile(updatedProfile)
+        FirestoreService.shared.updateUserProfile(updatedProfile, userId: userId)
+            .timeout(10, scheduler: DispatchQueue.main) // Add timeout
+            .receive(on: DispatchQueue.main)
             .sink(
                 receiveCompletion: { completion in
                     isLoading = false
-                    if case let .failure(error) = completion {
-                        errorMessage = error.localizedDescription
-                    } else {
-                        // Success - exit edit mode
+                    
+                    switch completion {
+                    case .finished:
+                        AppLogger.dbSuccess("Profile updated successfully", collection: "users")
+                        // Update local profile immediately for better UX
+                        authService.updateLocalProfile(updatedProfile)
                         isEditing = false
+                        
+                    case .failure(let error):
+                        AppLogger.dbError("Failed to update profile", error: error, collection: "users")
+                        if (error as NSError).domain == NSPOSIXErrorDomain && (error as NSError).code == 50 {
+                            errorMessage = "Network connection lost. Please check your internet connection and try again."
+                        } else {
+                            errorMessage = "Failed to update profile: \(error.localizedDescription)"
+                        }
                     }
                 },
                 receiveValue: { _ in }

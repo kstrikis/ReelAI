@@ -81,68 +81,24 @@ final class AuthenticationService: ObservableObject {
                     print("👤 Firebase auth state changed - User signed in: \(user.uid)")
                     authState = .signedIn(user)
 
-                    // Create a robust profile fetch
+                    // Just fetch the profile, don't create a default one
                     database.collection("users").document(user.uid)
                         .snapshotPublisher()
                         .receive(on: DispatchQueue.main)
                         .sink { completion in
                             if case let .failure(error) = completion {
                                 print("❌ Failed to fetch user profile: \(error.localizedDescription)")
-                                print("⚠️ Using local default profile due to network error")
                                 AppLogger.error(AppLogger.auth, error, context: "Fetch user profile")
-
-                                // Create and set a local profile immediately
-                                if self.userProfile == nil {
-                                    let defaultProfile = UserProfile(
-                                        username: "user\(user.uid.prefix(6))",
-                                        displayName: "New User",
-                                        email: user.email
-                                    )
-                                    self.userProfile = defaultProfile
-                                    print("✅ Local default profile created")
-                                }
                             }
                         } receiveValue: { [weak self] snapshot in
-                            if snapshot.exists {
-                                if let profile = try? snapshot.data(as: UserProfile.self) {
-                                    self?.userProfile = profile
-                                    print("✅ User profile loaded successfully:")
-                                    print("  - Username: \(profile.username)")
-                                    print("  - Display Name: \(profile.displayName)")
-                                    AppLogger.debug("👤 User profile fetched: \(profile.displayName)")
-                                } else {
-                                    print("❌ Failed to decode user profile data")
-                                    print("📄 Raw data: \(String(describing: snapshot.data()))")
-                                }
+                            if let profile = try? snapshot.data(as: UserProfile.self) {
+                                self?.userProfile = profile
+                                print("✅ User profile loaded successfully:")
+                                print("  - Username: \(profile.username)")
+                                print("  - Display Name: \(profile.displayName)")
+                                AppLogger.debug("👤 User profile fetched: \(profile.displayName)")
                             } else {
-                                print("⚠️ No profile document exists for user: \(user.uid)")
-                                print("👤 Creating default profile...")
-
-                                // Create and set default profile IMMEDIATELY
-                                let defaultProfile = UserProfile(
-                                    username: "user\(user.uid.prefix(6))",
-                                    displayName: "New User",
-                                    email: user.email
-                                )
-
-                                // Set it locally right away
-                                self?.userProfile = defaultProfile
-                                print("✅ Local default profile created")
-
-                                // Then try to save it to Firestore
-                                self?.updateProfile(defaultProfile)
-                                    .sink(
-                                        receiveCompletion: { completion in
-                                            if case let .failure(error) = completion {
-                                                print("⚠️ Failed to save default profile to Firestore: \(error.localizedDescription)")
-                                                print("ℹ️ Will retry on next connection")
-                                            } else {
-                                                print("✅ Default profile saved to Firestore")
-                                            }
-                                        },
-                                        receiveValue: { _ in }
-                                    )
-                                    .store(in: &self!.cancellables)
+                                print("⚠️ No valid profile found for user: \(user.uid)")
                             }
                         }
                         .store(in: &cancellables)
@@ -159,6 +115,14 @@ final class AuthenticationService: ObservableObject {
     }
 
     // MARK: - User Profile Methods
+
+    /// Updates the local user profile
+    /// - Parameter profile: The new profile to set
+    func updateLocalProfile(_ profile: UserProfile) {
+        AppLogger.methodEntry(AppLogger.auth)
+        userProfile = profile
+        AppLogger.methodExit(AppLogger.auth)
+    }
 
     /// Fetches the user's profile from Firestore
     /// - Parameter userId: The user's Firebase Auth UID
@@ -181,6 +145,127 @@ final class AuthenticationService: ObservableObject {
             .store(in: &cancellables)
 
         AppLogger.methodExit(AppLogger.auth)
+    }
+
+    /// Username validation rules
+    enum UsernameValidationError: Error, LocalizedError {
+        case tooShort
+        case tooLong
+        case invalidCharacters
+        case startsWithNumber
+        
+        var errorDescription: String? {
+            switch self {
+            case .tooShort:
+                return "Username must be at least 3 characters"
+            case .tooLong:
+                return "Username must be less than 30 characters"
+            case .invalidCharacters:
+                return "Username can only contain letters, numbers, and underscores"
+            case .startsWithNumber:
+                return "Username cannot start with a number"
+            }
+        }
+    }
+    
+    /// Validates a username format
+    /// - Parameter username: The username to validate
+    /// - Returns: Result indicating if username is valid, with error if not
+    private func validateUsername(_ username: String) -> Result<String, UsernameValidationError> {
+        AppLogger.methodEntry(AppLogger.auth, params: ["username": username])
+        
+        // Check length
+        guard username.count >= 3 else {
+            return .failure(.tooShort)
+        }
+        guard username.count < 30 else {
+            return .failure(.tooLong)
+        }
+        
+        // Check if starts with number
+        if let first = username.first, first.isNumber {
+            return .failure(.startsWithNumber)
+        }
+        
+        // Check for valid characters (letters, numbers, underscore only)
+        let validCharacterSet = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
+        guard username.unicodeScalars.allSatisfy({ validCharacterSet.contains($0) }) else {
+            return .failure(.invalidCharacters)
+        }
+        
+        return .success(username)
+    }
+
+    /// Updates a user's profile in Firestore
+    /// - Parameter profile: The profile data to save
+    /// - Returns: A publisher that emits when the operation completes or errors
+    func updateProfile(_ profile: UserProfile) -> AnyPublisher<Void, Error> {
+        AppLogger.methodEntry(AppLogger.auth)
+
+        guard let userId = currentUser?.uid else {
+            let error = NSError(
+                domain: "com.kstrikis.ReelAI",
+                code: -1,
+                userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
+            )
+            return Fail(error: error).eraseToAnyPublisher()
+        }
+        
+        // First validate username format
+        let validationResult = validateUsername(profile.username)
+        switch validationResult {
+        case .failure(let error):
+            return Fail(error: error).eraseToAnyPublisher()
+        case .success:
+            break
+        }
+        
+        // Then check availability and update profile
+        return checkUsernameAvailability(profile.username)
+            .flatMap { isAvailable -> AnyPublisher<Void, Error> in
+                if !isAvailable {
+                    // If checking our own current username, that's okay
+                    if let currentProfile = self.userProfile,
+                       currentProfile.username == profile.username {
+                        return self.updateProfileInFirestore(profile, userId: userId)
+                    }
+                    return Fail(error: NSError(
+                        domain: "com.kstrikis.ReelAI",
+                        code: -1,
+                        userInfo: [NSLocalizedDescriptionKey: "Username is already taken"]
+                    )).eraseToAnyPublisher()
+                }
+                
+                // Username is available, reserve it and update profile
+                return self.reserveUsername(profile.username)
+                    .flatMap { _ in
+                        self.updateProfileInFirestore(profile, userId: userId)
+                    }
+                    .eraseToAnyPublisher()
+            }
+            .eraseToAnyPublisher()
+    }
+    
+    /// Internal method to update profile in Firestore
+    private func updateProfileInFirestore(_ profile: UserProfile, userId: String) -> AnyPublisher<Void, Error> {
+        Future<Void, Error> { promise in
+            do {
+                try self.database.collection("users").document(userId).setData(from: profile) { error in
+                    if let error {
+                        AppLogger.error(AppLogger.auth, error, context: "Update user profile")
+                        promise(.failure(error))
+                    } else {
+                        AppLogger.debug("👤 User profile updated successfully")
+                        promise(.success(()))
+                    }
+                }
+            } catch {
+                AppLogger.error(AppLogger.auth, error, context: "Update user profile encoding")
+                promise(.failure(error))
+            }
+        }
+        .receive(on: DispatchQueue.main)
+        .eraseToAnyPublisher()
     }
 
     /// Generates a unique username from email or a base string
@@ -278,45 +363,6 @@ final class AuthenticationService: ObservableObject {
         .eraseToAnyPublisher()
     }
 
-    /// Creates or updates a user's profile in Firestore
-    /// - Parameter profile: The profile data to save
-    /// - Returns: A publisher that emits when the operation completes or errors
-    func updateProfile(_ profile: UserProfile) -> AnyPublisher<Void, Error> {
-        AppLogger.methodEntry(AppLogger.auth)
-
-        guard let userId = currentUser?.uid else {
-            let error = NSError(
-                domain: "com.kstrikis.ReelAI",
-                code: -1,
-                userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
-            )
-            return Fail(error: error).eraseToAnyPublisher()
-        }
-
-        // First reserve the username, then update the profile
-        return reserveUsername(profile.username)
-            .flatMap { _ in
-                Future<Void, Error> { promise in
-                    do {
-                        try self.database.collection("users").document(userId).setData(from: profile) { error in
-                            if let error {
-                                AppLogger.error(AppLogger.auth, error, context: "Update user profile")
-                                promise(.failure(error))
-                            } else {
-                                AppLogger.debug("👤 User profile updated successfully")
-                                promise(.success(()))
-                            }
-                        }
-                    } catch {
-                        AppLogger.error(AppLogger.auth, error, context: "Update user profile encoding")
-                        promise(.failure(error))
-                    }
-                }
-            }
-            .receive(on: DispatchQueue.main)
-            .eraseToAnyPublisher()
-    }
-
     // MARK: - Authentication Methods
 
     /// Signs in with email and password
@@ -362,34 +408,6 @@ final class AuthenticationService: ObservableObject {
 
         // Using a fixed demo account for simplicity
         return signIn(email: "demo@example.com", password: "demo123")
-            .flatMap { user -> AnyPublisher<User, Error> in
-                print("🎭 Demo user authenticated successfully")
-                print("🎭 Creating/updating demo profile...")
-
-                // Create demo profile
-                let profile = UserProfile(
-                    username: "demo",
-                    displayName: "Demo User",
-                    email: user.email,
-                    profileImageUrl: nil
-                )
-
-                // Return a publisher that completes only when both auth and profile are done
-                return self.updateProfile(profile)
-                    .map { _ -> User in
-                        print("🎭 Demo profile created/updated successfully")
-                        return user
-                    }
-                    .catch { error -> AnyPublisher<User, Error> in
-                        print("⚠️ Failed to create demo profile: \(error.localizedDescription)")
-                        print("⚠️ Continuing with auth only...")
-                        // Even if profile fails, return the authenticated user
-                        return Just(user)
-                            .setFailureType(to: Error.self)
-                            .eraseToAnyPublisher()
-                    }
-                    .eraseToAnyPublisher()
-            }
             .handleEvents(receiveOutput: { user in
                 print("✅ Demo sign in completed successfully")
                 print("  - User ID: \(user.uid)")
@@ -399,7 +417,7 @@ final class AuthenticationService: ObservableObject {
             .eraseToAnyPublisher()
     }
 
-    /// Creates a new user account with email and password and sets up their profile
+    /// Creates a new user account with email and password
     /// - Parameters:
     ///   - email: User's email
     ///   - password: User's password
@@ -407,9 +425,8 @@ final class AuthenticationService: ObservableObject {
     func signUp(email: String, password: String) -> AnyPublisher<User, Error> {
         AppLogger.methodEntry(AppLogger.auth, params: ["email": email])
 
-        // First create the auth account
         return Future<User, Error> { promise in
-            Auth.auth().createUser(withEmail: email, password: password) { [weak self] result, error in
+            Auth.auth().createUser(withEmail: email, password: password) { result, error in
                 if let error {
                     AppLogger.error(AppLogger.auth, error, context: "Sign up")
                     promise(.failure(error))
@@ -427,36 +444,8 @@ final class AuthenticationService: ObservableObject {
                     return
                 }
 
-                // Generate username from email
-                let baseUsername = user.email?
-                    .components(separatedBy: "@")
-                    .first?
-                    .lowercased() ?? "user"
-
-                // Generate a unique username and create profile
-                self?.generateUniqueUsername(from: baseUsername)
-                    .flatMap { username -> AnyPublisher<Void, Error> in
-                        let profile = UserProfile(
-                            username: username,
-                            displayName: baseUsername.capitalized,
-                            email: user.email
-                        )
-                        return self?.updateProfile(profile) ?? Fail(error: NSError()).eraseToAnyPublisher()
-                    }
-                    .sink(
-                        receiveCompletion: { completion in
-                            if case let .failure(error) = completion {
-                                AppLogger.error(AppLogger.auth, error, context: "Sign up - create profile")
-                                // Don't fail the signup if profile creation fails
-                                // The profile can be created later
-                                AppLogger.debug("👤 Profile creation failed, but continuing with sign up")
-                            }
-                            AppLogger.methodExit(AppLogger.auth, result: "Success: \(user.uid)")
-                            promise(.success(user))
-                        },
-                        receiveValue: { _ in }
-                    )
-                    .store(in: &self!.cancellables)
+                AppLogger.methodExit(AppLogger.auth, result: "Success: \(user.uid)")
+                promise(.success(user))
             }
         }
         .receive(on: DispatchQueue.main)
@@ -466,13 +455,11 @@ final class AuthenticationService: ObservableObject {
     /// Signs out the current user
     func signOut() {
         AppLogger.methodEntry(AppLogger.auth)
-
         do {
             try Auth.auth().signOut()
             AppLogger.methodExit(AppLogger.auth, result: "Success")
         } catch {
             AppLogger.error(AppLogger.auth, error, context: "Sign out")
-            authState = .error(error)
         }
     }
 }
