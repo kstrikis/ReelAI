@@ -71,6 +71,39 @@ class LocalVideoService {
     func getAllVideos() -> [URL] {
         print("📼 🔍 Fetching videos from Photos")
         
+        // First check Photos permission status
+        let status = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+        print("📼 🔑 Photos permission status: \(status.rawValue)")
+        
+        // If not authorized, handle permission request
+        if status != .authorized {
+            print("❌ 🔒 Photos access not authorized (status: \(status.rawValue))")
+            
+            // Only request permission if not determined yet
+            if status == .notDetermined {
+                print("📼 🔑 Requesting Photos permission...")
+                let semaphore = DispatchSemaphore(value: 0)
+                var granted = false
+                
+                PHPhotoLibrary.requestAuthorization(for: .readWrite) { newStatus in
+                    granted = newStatus == .authorized
+                    semaphore.signal()
+                }
+                semaphore.wait()
+                
+                if !granted {
+                    print("❌ 🔒 Photos permission denied")
+                    return []
+                }
+            } else {
+                print("❌ 🔒 Photos permission not available")
+                return []
+            }
+        }
+        
+        // If we get here, we have permission
+        print("📼 ✅ Photos access authorized")
+        
         let options = PHFetchOptions()
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
@@ -86,11 +119,19 @@ class LocalVideoService {
             let options = PHVideoRequestOptions()
             options.version = .current
             options.deliveryMode = .highQualityFormat
+            options.isNetworkAccessAllowed = true
             
             PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
                 defer { dispatchGroup.leave() }
-                guard let urlAsset = avAsset as? AVURLAsset else { return }
-                videoURLs.append(urlAsset.url)
+                if let urlAsset = avAsset as? AVURLAsset {
+                    // Clean the URL by removing any query parameters
+                    if let cleanURL = URL(string: urlAsset.url.absoluteString.components(separatedBy: "#").first ?? "") {
+                        videoURLs.append(cleanURL)
+                        print("📼 ✅ Successfully retrieved URL for video asset")
+                    }
+                } else {
+                    print("❌ 🚫 Could not get URL for video asset")
+                }
             }
         }
         
@@ -153,20 +194,78 @@ class LocalVideoService {
     
     func generateThumbnail(for videoURL: URL) -> AnyPublisher<UIImage?, Never> {
         print("📼 🖼️ Starting thumbnail generation for \(videoURL.lastPathComponent)")
+        
         return Future<UIImage?, Never> { promise in
-            Task {
-                let asset = AVURLAsset(url: videoURL)
-                let imageGenerator = AVAssetImageGenerator(asset: asset)
-                imageGenerator.appliesPreferredTrackTransform = true
-                imageGenerator.maximumSize = CGSize(width: 300, height: 300)
+            // Find the PHAsset that corresponds to this URL
+            let options = PHFetchOptions()
+            options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
+            
+            let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
+            print("📼 🔍 Searching for matching video asset...")
+            
+            var foundAsset: PHAsset?
+            fetchResult.enumerateObjects { asset, _, stop in
+                let dispatchGroup = DispatchGroup()
+                dispatchGroup.enter()
                 
-                do {
-                    let cgImage = try await imageGenerator.image(at: .zero).image
-                    let thumbnail = UIImage(cgImage: cgImage)
-                    print("📼 ✅ Generated thumbnail")
-                    promise(.success(thumbnail))
-                } catch {
-                    print("❌ 💥 Failed to generate thumbnail: \(error.localizedDescription)")
+                let videoOptions = PHVideoRequestOptions()
+                videoOptions.version = .current
+                videoOptions.deliveryMode = .highQualityFormat
+                videoOptions.isNetworkAccessAllowed = true
+                
+                PHImageManager.default().requestAVAsset(forVideo: asset, options: videoOptions) { avAsset, _, _ in
+                    defer { dispatchGroup.leave() }
+                    if let urlAsset = avAsset as? AVURLAsset {
+                        let assetURL = urlAsset.url
+                        if assetURL.lastPathComponent == videoURL.lastPathComponent {
+                            foundAsset = asset
+                            stop.pointee = true
+                        }
+                    }
+                }
+                
+                dispatchGroup.wait()
+            }
+            
+            guard let asset = foundAsset else {
+                print("❌ 🚫 Could not find matching video asset")
+                promise(.success(nil))
+                return
+            }
+            
+            print("📼 ✅ Found matching video asset")
+            
+            // Request thumbnail using PHImageManager
+            let size = CGSize(width: 300, height: 300)
+            let thumbnailOptions = PHImageRequestOptions()
+            thumbnailOptions.deliveryMode = .highQualityFormat
+            thumbnailOptions.isNetworkAccessAllowed = true
+            thumbnailOptions.isSynchronous = false
+            
+            print("📼 🖼️ Requesting thumbnail generation...")
+            PHImageManager.default().requestImage(
+                for: asset,
+                targetSize: size,
+                contentMode: .aspectFill,
+                options: thumbnailOptions
+            ) { image, info in
+                if let error = info?[PHImageErrorKey] as? Error {
+                    print("❌ 💥 Thumbnail generation failed: \(error.localizedDescription)")
+                    promise(.success(nil))
+                    return
+                }
+                
+                if let cancelled = info?[PHImageCancelledKey] as? Bool, cancelled {
+                    print("❌ 🚫 Thumbnail generation cancelled")
+                    promise(.success(nil))
+                    return
+                }
+                
+                if let image = image {
+                    print("📼 ✅ Thumbnail generated successfully")
+                    promise(.success(image))
+                } else {
+                    print("❌ 🚫 No thumbnail generated")
                     promise(.success(nil))
                 }
             }

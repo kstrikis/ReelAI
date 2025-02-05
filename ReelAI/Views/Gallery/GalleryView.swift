@@ -41,7 +41,7 @@ struct GalleryView: View {
                 .padding()
             }
             .navigationTitle("My Videos")
-            .fullScreenCover(isPresented: $isVideoPlayerPresented) {
+            .sheet(isPresented: $isVideoPlayerPresented) {
                 if let videoURL = selectedVideo {
                     VideoPlayerView(videoURL: videoURL)
                 }
@@ -94,120 +94,44 @@ struct VideoThumbnailView: View {
 struct VideoPlayerView: View {
     let videoURL: URL
     @Environment(\.presentationMode) var presentationMode
-    @State private var showingDeleteAlert = false
-    @State private var showingUploadAlert = false
-    @State private var player: AVPlayer
-    @State private var isPlaying = false
-    
-    init(videoURL: URL) {
-        self.videoURL = videoURL
-        self._player = State(initialValue: AVPlayer(url: videoURL))
-    }
+    @State private var player: AVPlayer?
     
     var body: some View {
-        NavigationView {
-            ZStack {
+        ZStack {
+            Color.black.edgesIgnoringSafeArea(.all)
+            
+            if let player = player {
                 VideoPlayer(player: player)
                     .edgesIgnoringSafeArea(.all)
                     .onAppear {
                         print("🎥 ▶️ Starting video playback")
                         player.play()
-                        isPlaying = true
                     }
                     .onDisappear {
                         print("🎥 ⏹️ Stopping video playback")
                         player.pause()
-                        isPlaying = false
                     }
-                
-                // Playback controls overlay
-                VStack {
-                    Spacer()
-                    HStack {
-                        Button(action: {
-                            if isPlaying {
-                                print("🎥 ⏸️ Pausing video")
-                                player.pause()
-                            } else {
-                                print("🎥 ▶️ Resuming video")
-                                player.play()
-                            }
-                            isPlaying.toggle()
-                        }) {
-                            Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                                .font(.system(size: 44))
-                                .foregroundColor(.white)
-                        }
-                        
-                        Button(action: {
-                            print("🎥 ⏮️ Rewinding video")
-                            player.seek(to: .zero)
-                            player.play()
-                            isPlaying = true
-                        }) {
-                            Image(systemName: "gobackward")
-                                .font(.system(size: 44))
-                                .foregroundColor(.white)
-                        }
-                    }
-                    .padding(.bottom, 40)
-                }
+            } else {
+                ProgressView("Loading video...")
+                    .foregroundColor(.white)
             }
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") {
-                        print("🎥 🚪 Closing video player")
-                        presentationMode.wrappedValue.dismiss()
-                    }
-                }
-                
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Menu {
-                        Button(action: {
-                            showingUploadAlert = true
-                        }) {
-                            Label("Upload", systemImage: "arrow.up.circle")
-                        }
-                        
-                        Button(role: .destructive, action: {
-                            showingDeleteAlert = true
-                        }) {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    } label: {
-                        Image(systemName: "ellipsis.circle")
-                            .foregroundColor(.white)
-                    }
-                }
+            
+            Button(action: {
+                print("🎥 🚪 Closing video player")
+                presentationMode.wrappedValue.dismiss()
+            }) {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.title)
+                    .foregroundColor(.white)
+                    .padding()
             }
-            .alert("Delete Video", isPresented: $showingDeleteAlert) {
-                Button("Delete", role: .destructive) {
-                    print("🎥 🗑️ Deleting video")
-                    Task {
-                        do {
-                            try await LocalVideoService.shared.deleteVideo(at: videoURL).async()
-                            print("🎥 ✅ Video deleted successfully")
-                            presentationMode.wrappedValue.dismiss()
-                        } catch {
-                            print("❌ 💥 Failed to delete video: \(error.localizedDescription)")
-                        }
-                    }
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Are you sure you want to delete this video? This action cannot be undone.")
-            }
-            .alert("Upload Video", isPresented: $showingUploadAlert) {
-                Button("Upload", role: .none) {
-                    print("🎥 📤 Initiating video upload")
-                    presentationMode.wrappedValue.dismiss()
-                    // The parent view will handle the upload since it has access to the ViewModel
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Would you like to upload this video to the cloud?")
-            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        .task {
+            print("🎥 🔍 Loading video from: \(videoURL.absoluteString)")
+            let asset = AVURLAsset(url: videoURL)
+            let playerItem = AVPlayerItem(asset: asset)
+            self.player = AVPlayer(playerItem: playerItem)
         }
     }
 }
