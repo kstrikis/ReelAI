@@ -95,10 +95,11 @@ final class VideoUploadService {
         .eraseToAnyPublisher()
     }
 
-    func uploadVideo(at url: URL, userId: String) -> AnyPublisher<VideoUploadState, Never> {
+    func uploadVideo(at url: URL, userId: String, videoId: String) -> AnyPublisher<VideoUploadState, Never> {
         AppLogger.methodEntry(AppLogger.ui)
         print("📤 Starting video upload from: \(url.path)")
-        print("📤 User ID from parameter: \(userId)")
+        print("📤 User ID: \(userId)")
+        print("📤 Video ID: \(videoId)")
 
         // Check auth state immediately
         if let currentUser = Auth.auth().currentUser {
@@ -155,10 +156,9 @@ final class VideoUploadService {
                         }
                     },
                     receiveValue: { fileSize in
-                        // Create storage reference with fresh reference
+                        // Create storage reference using videoId
                         print("📤 Creating storage reference...")
-                        let filename = UUID().uuidString + ".mp4"
-                        let videoRef = self.storage.reference().child("videos/\(userId)/raw/\(filename)")
+                        let videoRef = self.storage.reference().child("videos/\(userId)/\(videoId).mp4")
                         print("📤 Upload destination: \(videoRef.bucket)/\(videoRef.fullPath)")
                         print("✅ Storage reference created")
 

@@ -8,7 +8,7 @@ struct GalleryView: View {
     @StateObject private var viewModel: GalleryViewModel
     @State private var selectedVideo: URL?
     @State private var isVideoPlayerPresented = false
-    @State private var showingUploadAlert = false
+    @State private var showingPublisher = false
     @EnvironmentObject private var authService: AuthenticationService
 
     init(authService: AuthenticationService) {
@@ -22,70 +22,64 @@ struct GalleryView: View {
     var body: some View {
         NavigationView {
             ScrollView {
-                if viewModel.isUploading {
-                    ProgressView("Uploading... \(Int((viewModel.uploadProgress ?? 0) * 100))%")
-                        .padding()
-                }
-
                 LazyVGrid(columns: columns, spacing: 16) {
                     ForEach(viewModel.videos, id: \.self) { videoURL in
-                        VideoThumbnailView(videoURL: videoURL, thumbnail: viewModel.thumbnails[videoURL]) {
-                            selectedVideo = videoURL
-                            isVideoPlayerPresented = true
-                        }
-                        .onLongPressGesture {
-                            selectedVideo = videoURL
-                            showingUploadAlert = true
-                        }
+                        VideoThumbnailView(
+                            videoURL: videoURL,
+                            thumbnail: viewModel.thumbnails[videoURL],
+                            onTap: {
+                                print("🎥 Opening video player for: \(videoURL.path)")
+                                selectedVideo = videoURL
+                                isVideoPlayerPresented = true
+                            },
+                            onPublish: {
+                                print("🎥 Opening publisher for: \(videoURL.path)")
+                                selectedVideo = videoURL
+                                showingPublisher = true
+                            },
+                            onDelete: {
+                                print("🎥 Deleting video at: \(videoURL.path)")
+                                Task {
+                                    await viewModel.deleteVideo(at: videoURL)
+                                }
+                            }
+                        )
                     }
                 }
                 .padding()
             }
             .navigationTitle("My Videos")
-            .onChange(of: isVideoPlayerPresented) { isPresented in
-                print("🎥 📝 Video player sheet isPresented changed to: \(isPresented)")
-                print("🎥 📝 Selected video URL: \(selectedVideo?.absoluteString ?? "nil")")
+            .sheet(isPresented: $isVideoPlayerPresented) {
+                if let videoURL = selectedVideo {
+                    NavigationView {
+                        VideoPlayerView(videoURL: videoURL)
+                            .navigationBarHidden(true)
+                    }
+                    .interactiveDismissDisabled()
+                }
             }
-            .sheet(isPresented: $isVideoPlayerPresented, onDismiss: {
-                print("🎥 📝 Video player sheet dismissed")
-                // Don't clear selectedVideo here
-            }) {
-                Group {
-                    if let videoURL = selectedVideo {
-                        NavigationView {
-                            VideoPlayerView(videoURL: videoURL)
-                                .navigationBarHidden(true)
-                                .onAppear {
-                                    print("🎥 📝 VideoPlayerView onAppear called")
-                                }
-                                .onDisappear {
-                                    print("🎥 📝 VideoPlayerView onDisappear called")
-                                    // Clear selectedVideo only when the view actually disappears
-                                    selectedVideo = nil
-                                }
-                        }
-                        .interactiveDismissDisabled()
-                        .logOnAppear("🎥 📝 Creating video player sheet with URL: \(videoURL.absoluteString)")
-                    } else {
-                        Text("No video selected")
-                            .foregroundColor(.red)
-                            .onAppear {
-                                print("❌ 🚫 Sheet presented with no video selected")
-                            }
+            .sheet(isPresented: $showingPublisher) {
+                if let videoURL = selectedVideo {
+                    NavigationView {
+                        PublishingView(selectedVideo: videoURL)
                     }
                 }
             }
-            .alert("Upload Video", isPresented: $showingUploadAlert) {
-                Button("Upload", role: .none) {
-                    if let videoURL = selectedVideo {
-                        Task {
-                            await viewModel.uploadVideo(at: videoURL)
-                        }
-                    }
+            .onChange(of: isVideoPlayerPresented) { newValue in
+                if !newValue {
+                    selectedVideo = nil
                 }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("Would you like to upload this video to the cloud?")
+            }
+            .onChange(of: showingPublisher) { newValue in
+                if !newValue {
+                    // Clean up temporary file if it exists
+                    if let url = selectedVideo,
+                       url.path.contains(FileManager.default.temporaryDirectory.path) {
+                        print("🎥 🧹 Cleaning up temporary video file")
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                    selectedVideo = nil
+                }
             }
             .onAppear {
                 viewModel.loadVideos()
@@ -98,12 +92,11 @@ struct VideoThumbnailView: View {
     let videoURL: URL
     let thumbnail: UIImage?
     let onTap: () -> Void
+    let onPublish: () -> Void
+    let onDelete: () -> Void
 
     var body: some View {
-        Button(action: {
-            print("🎥 👆 Video thumbnail tapped: \(videoURL.lastPathComponent)")
-            onTap()
-        }) {
+        Button(action: onTap) {
             if let thumbnail {
                 Image(uiImage: thumbnail)
                     .resizable()
@@ -118,6 +111,23 @@ struct VideoThumbnailView: View {
                     .overlay(
                         ProgressView()
                     )
+            }
+        }
+        .contextMenu {
+            Button(action: {
+                print("🎥 🔄 GALLERY - Opening publisher")
+                print("🎥 🔄 GALLERY - Video URL type: \(type(of: videoURL))")
+                print("🎥 🔄 GALLERY - Video URL scheme: \(videoURL.scheme ?? "nil")")
+                print("🎥 🔄 GALLERY - Is file URL: \(videoURL.isFileURL)")
+                print("🎥 🔄 GALLERY - Full URL: \(videoURL)")
+                print("🎥 🔄 GALLERY - Path: \(videoURL.path)")
+                onPublish()
+            }) {
+                Label("Send to Publisher", systemImage: "square.and.arrow.up")
+            }
+            
+            Button(role: .destructive, action: onDelete) {
+                Label("Delete", systemImage: "trash")
             }
         }
     }
@@ -305,12 +315,8 @@ struct VideoPlayerView: View {
 class GalleryViewModel: ObservableObject {
     @Published var videos: [URL] = []
     @Published var thumbnails: [URL: UIImage] = [:]
-    @Published var isUploading = false
-    @Published var uploadProgress: Double?
 
-    private var cancellables = Set<AnyCancellable>()
     private let localVideoService = LocalVideoService.shared
-    private let uploadService = VideoUploadService.shared
     private let authService: AuthenticationService
 
     init(authService: AuthenticationService) {
@@ -349,35 +355,26 @@ class GalleryViewModel: ObservableObject {
         }
     }
 
-    func uploadVideo(at url: URL) async {
-        print("🖼️ 📤 Starting video upload process")
-        guard let userId = authService.currentUser?.uid else {
-            print("❌ 🔒 Upload failed: User not authenticated")
-            return
-        }
-
-        print("🖼️ 🎬 Beginning upload for video: \(url.lastPathComponent)")
-        isUploading = true
-        uploadProgress = 0
-
-        uploadService.uploadVideo(at: url, userId: userId)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] state in
-                switch state {
-                case let .progress(progress):
-                    print("🖼️ 📊 Upload progress: \(Int(progress * 100))%")
-                    self?.uploadProgress = progress
-                case .completed:
-                    print("🖼️ ✅ Upload completed successfully")
-                    self?.isUploading = false
-                    self?.uploadProgress = nil
-                case let .failure(error):
-                    print("❌ 💥 Upload failed: \(error.localizedDescription)")
-                    self?.isUploading = false
-                    self?.uploadProgress = nil
-                }
+    func deleteVideo(at url: URL) async {
+        print("🖼️ 🗑️ Starting video deletion process for: \(url.path)")
+        
+        do {
+            try await localVideoService.deleteVideo(at: url)
+                .async()
+            
+            // Update UI
+            await MainActor.run {
+                // Remove from videos array
+                videos.removeAll { $0 == url }
+                // Remove thumbnail
+                thumbnails.removeValue(forKey: url)
             }
-            .store(in: &cancellables)
+            print("🖼️ ✅ Successfully deleted video and updated UI")
+        } catch {
+            print("❌ 💥 Failed to delete video: \(error.localizedDescription)")
+            print("  - File path: \(url.path)")
+            print("  - Error details: \(error)")
+        }
     }
 }
 

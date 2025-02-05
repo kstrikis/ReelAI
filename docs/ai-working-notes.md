@@ -40,77 +40,135 @@ Below is an end-to-end plan for our MVP's data architecture in Firebase, along w
 ──────────────────────────────────────────────
 2. Firestore Data Model
 ──────────────────────────────────────────────
-Our schema revolves around a few key collections. We'll follow lowerCamelCase for fields and plural names for collections. This provides consistency in our Swift code and Firestore queries.
+Our schema revolves around a few key collections. We'll follow lowerCamelCase for fields and plural names for collections.
 
 A. Users Collection ("users")
-  – Each user document is keyed by the UID from Firebase Auth.
-  – Fields (in lowerCamelCase):
-   • displayName (String) – User's chosen display name.
-   • email (String, optional) – Email from Auth (if available).
-   • profileImageUrl (String, optional) – Link to user avatar stored in Firebase Storage.
-   • createdAt (Timestamp) – When the user joined.
-   • additional future fields (e.g., bio, socialLinks...) can be added as needed.
-
-  // Sample document structure for a user:
-  {
-    "displayName": "Demo User",
-    "email": "demo@example.com",
-    "profileImageUrl": "gs://<bucket>/users/demoUser.png",
-    "createdAt": <Timestamp>
-  }
+  – Each user document is keyed by the UID from Firebase Auth.
+  – Fields (in lowerCamelCase):
+   • displayName (String) – User's chosen display name.
+   • username (String) – Unique username for the user.
+   • email (String, optional) – Email from Auth (if available).
+   • profileImageUrl (String, optional) – Link to user avatar stored in Firebase Storage.
+   • createdAt (Timestamp) – When the user joined.
 
 B. Videos Collection ("videos")
-  – Each video document represents a full video created by a user and is stored in Firestore.
-  – Fields:
-   • videoId (String) – Unique identifier (could also use the document ID).
-   • ownerId (String) – The UID of the user who created the video.
-   • title (String) – Title or short description.
-   • description (String, optional) – A fuller explanation.
-   • mediaUrls (Map or Array) – Collection of URLs (from Firebase Storage) for the various video clips, AI-generated images, and processed audio files.
-    – e.g., { "rawClip": "<url>", "editedClip": "<url>" } or an array of { "type": "rawClip", "url": "<url>" } items.
-   • createdAt (Timestamp) – Timestamp of video creation.
-   • updatedAt (Timestamp, optional) – For updates.
-   • status (String) – e.g., "processing", "completed", "error".  
-   • // Future: You can add fields for AI features (scriptGenerated, voiceVersion, etc.)
+  – Each video document represents a user-uploaded video.
+  – Core Fields:
+   • ownerId (String) – The UID of the user who created the video
+   • username (String) – Creator's username (denormalized for efficiency)
+   • title (String) – Video title
+   • description (String, optional) – Full description
+   • mediaUrl (String) – URL to the video file in Storage
+   • createdAt (Timestamp) – Creation time
+   • updatedAt (Timestamp) – Last modification time
+  – Engagement Sub-object:
+   • viewCount (Int) – Number of views
+   • likeCount (Int) – Number of likes
+   • dislikeCount (Int) – Number of dislikes
+   • tags (Map<String, Int>) – Tag name to usage count mapping
 
-  // Example document for a video:
-  {
-    "ownerId": "UID_123456",
-    "title": "Absurd Meme Creation",
-    "description": "A hilariously absurd mashup of AI clips",
-    "mediaUrls": {
-        "rawClip": "gs://<bucket>/videos/video123/raw.mp4",
-        "editedClip": "gs://<bucket>/videos/video123/edited.mp4"
-    },
-    "createdAt": <Timestamp>,
-    "status": "completed"
-  }
+  // Example document structure:
+  {
+    "ownerId": "user123",
+    "username": "creator",
+    "title": "My Cool Video",
+    "description": "Check this out!",
+    "mediaUrl": "gs://bucket/videos/video123.mp4",
+    "createdAt": <Timestamp>,
+    "updatedAt": <Timestamp>,
+    "engagement": {
+      "viewCount": 1000,
+      "likeCount": 50,
+      "dislikeCount": 2,
+      "tags": {
+        "funny": 30,
+        "creative": 25
+      }
+    }
+  }
 
-C. Interactions (Comments, Likes, Shares)
-We can approach interactions in one of two ways. For an MVP, a simple method is to use subcollections under each video.
+C. Comments Structure
+Comments are stored as subcollections under each video document:
+videos/{videoId}/comments/{commentId}
 
-  – Under each video document, include:
-   a. Subcollection "comments"
-    • Fields:
-     – commentId (String, optional – Firestore auto-ID works well)
-     – authorId (String) – UID of commenting user.
-     – text (String) – Comment content.
-     – createdAt (Timestamp)
+  – Comment Fields:
+   • userId (String) – Commenter's UID
+   • username (String) – Commenter's username
+   • text (String) – Comment content
+   • createdAt (Timestamp) – When posted
+   • likeCount (Int) – Number of likes
+   • dislikeCount (Int) – Number of dislikes
+   • replyTo (String, optional) – Parent comment ID if this is a reply
 
-    // Example path: videos/{videoId}/comments/{commentId}
-   
-   b. Subcollection "likes"
-    • Instead of storing detailed information, you might simply store a document for each like:
-     – Fields:
-      • userId (String) – Which user liked the video.
-      • createdAt (Timestamp) – (Optional) when the like was made.
-    // Alternatively, if likes are very common, you might store an array of userIds on the parent video document,
-    // but that array pattern can have limitations as the like count scales.
+  // Example comment document:
+  {
+    "userId": "user456",
+    "username": "commenter",
+    "text": "Great video!",
+    "createdAt": <Timestamp>,
+    "likeCount": 5,
+    "dislikeCount": 0,
+    "replyTo": null
+  }
 
-   c. (Optional for MVP) Subcollection "shares" if you want to track this behavior.
+D. Reactions Tracking
+Reactions are stored in subcollections to track individual user reactions:
+videos/{videoId}/comments/{commentId}/reactions/{reactionId}
+
+  – Reaction Fields:
+   • userId (String) – User who reacted
+   • createdAt (Timestamp) – When the reaction was made
+   • isLike (Boolean) – true for like, false for dislike
+
+  // Example reaction document:
+  {
+    "userId": "user789",
+    "createdAt": <Timestamp>,
+    "isLike": true
+  }
 
 ──────────────────────────────────────────────
-3. Firebase Storage Structure
+3. Key Operations
+──────────────────────────────────────────────
+
+A. Video Operations:
+  • Create video with initial metadata
+  • Fetch videos (with optional user filter)
+  • Update video metadata
+  • Delete video (and all associated subcollections)
+
+B. Engagement Operations:
+  • Increment view count
+  • Add/remove likes or dislikes
+  • Add tags with user counts
+  • Track user-specific reactions
+
+C. Comment Operations:
+  • Add comment (top-level or reply)
+  • Fetch comments for a video
+  • Add/remove comment reactions
+  • Track user-specific reactions to comments
+
+D. Query Patterns:
+  • Get recent videos
+  • Get user's videos
+  • Get video comments
+  • Check user's reactions
+  • Get trending videos (by engagement)
+
+──────────────────────────────────────────────
+4. Security Rules
+──────────────────────────────────────────────
+Key security considerations:
+• Users can only edit their own profiles
+• Anyone can view videos and comments
+• Only authenticated users can create content
+• Users can only edit/delete their own content
+• Reaction counts must be incremented/decremented atomically
+• One reaction per user per content item
+
+──────────────────────────────────────────────
+5. Firebase Storage Structure
 ──────────────────────────────────────────────
 We'll use Firebase Storage to hold the actual media files referenced in our Firestore documents.
 
@@ -121,7 +179,7 @@ We'll use Firebase Storage to hold the actual media files referenced in our Fire
   – Future additions, such as AI-generated images or audio clips, could fit under similar directories (e.g., /videos/{videoId}/aiImages/...).
 
 ──────────────────────────────────────────────
-4. Naming Conventions in Swift & Firestore
+6. Naming Conventions in Swift & Firestore
 ──────────────────────────────────────────────
 • Collections: Use plural names, e.g., "users", "videos", "comments", "likes".  
 • Document Fields: Use lowerCamelCase (e.g., ownerId, createdAt, profileImageUrl).  
@@ -146,7 +204,7 @@ We'll use Firebase Storage to hold the actual media files referenced in our Fire
 • By following a consistent naming scheme, both the Firestore documents and the Swift code remain in sync, simplifying queries and data parsing.
 
 ──────────────────────────────────────────────
-5. Comments on Future Planning
+7. Comments on Future Planning
 ──────────────────────────────────────────────
 • For now, our plan focuses on core functionality: user authentication (including a demo mode), video capture/upload, basic editing metadata storage, and simple interaction tracking.  
 • As we evolve the app, we can introduce additional fields like AI-generated script data, voice synthesis metadata, and more refined editing history.  
