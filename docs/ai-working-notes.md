@@ -165,6 +165,23 @@ This approach meets our immediate need to demonstrate a meme video creation tool
 # AI Working Notes
 
 ## Latest Updates
+- Added new AI Tools tab with placeholder features:
+  - Story Maker (coming soon)
+  - Clip Maker (coming soon)
+  - Audio Maker (coming soon)
+  - Assembler (coming soon)
+  - Publisher (functional)
+- Implemented video publishing functionality:
+  - Video selection from library
+  - Title and description input
+  - Upload progress tracking
+  - Upload cancellation support
+  - Success/error handling
+- Modified tab structure:
+  - Camera (leftmost)
+  - AI Tools (center-left)
+  - Home (center-right)
+  - Menu (rightmost)
 - Fixed camera orientation by setting videoRotationAngle to 90 degrees
 - Camera improvements:
   - Using front camera by default

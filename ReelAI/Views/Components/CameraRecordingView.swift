@@ -107,11 +107,11 @@ final class CameraViewModel {
                 print("📸 📝 Saving to local storage...")
                 let persistentURL = try await localVideoService.saveVideo(from: tempURL).async()
                 print("📸 ✅ Video saved to: \(persistentURL.path)")
-                
+
                 // Clean up temp file
                 try? FileManager.default.removeItem(at: tempURL)
                 print("📸 🧹 Cleaned up temporary file")
-                
+
             } else {
                 print("📸 ▶️ Starting recording...")
                 // Start recording
@@ -154,7 +154,7 @@ final class CameraViewModel {
         do {
             let persistentURL = try await localVideoService.saveVideo(from: tempURL).async()
             print("📸 ✅ Video saved to persistent storage at: \(persistentURL.path)")
-            
+
             // Clean up the temporary file
             try FileManager.default.removeItem(at: tempURL)
             print("📸 🧹 Cleaned up temporary file")
@@ -291,9 +291,9 @@ struct CameraRecordingView: View {
                                 .foregroundColor(.white)
                                 .padding()
                         })
-                        
+
                         Spacer()
-                        
+
                         Button(action: {
                             Task {
                                 await CameraManager.shared.switchCamera()
