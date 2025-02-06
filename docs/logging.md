@@ -1,159 +1,158 @@
 # ReelAI Logging Standards
 
+## Core Logging Pattern
+
+We use a simple, reliable three-emoji logging system:
+```swift
+Log.p(CONTEXT, ACTION, ALERT?, MESSAGE)
+```
+
+Where:
+- `CONTEXT`: Which part of the app (first emoji)
+- `ACTION`: What's happening (second emoji)
+- `ALERT`: Optional status/importance (third emoji)
+- `MESSAGE`: The actual log message
+
+Example:
+```swift
+Log.p(Log.video, Log.start, Log.warning, "Buffer low for video: \(videoId)")
+// Output: [10:45:30][main][VideoPlayer.swift:121] 🎥 ▶️ ⚠️ Buffer low for video: abc123
+```
+
+## Context Emojis (First Position)
+- 🎥 `Log.video` - Video Player
+- 📼 `Log.storage` - Video Storage/Files
+- 📤 `Log.upload` - Upload/Download
+- 🔥 `Log.firebase` - Firebase/Firestore
+- 👤 `Log.user` - User/Auth
+- 📱 `Log.app` - App/UI
+- 🎬 `Log.camera` - Camera
+
+## Action Emojis (Second Position)
+- ▶️ `Log.start` - Start/Begin
+- ⏹️ `Log.stop` - Stop/End
+- 💾 `Log.save` - Save/Write
+- 🔍 `Log.read` - Read/Query
+- 🔄 `Log.update` - Update/Change
+- 🗑️ `Log.delete` - Delete
+- ⚡️ `Log.event` - Event/Trigger
+
+## Alert Emojis (Third Position, Optional)
+- ❌ `Log.error` - Error
+- ⚠️ `Log.warning` - Warning
+- 🚨 `Log.critical` - Critical
+- ✨ `Log.success` - Important Success
+
 ## Critical Logging Points
 
 ### 1. State Transitions
-Always log when the application's state changes significantly:
 ```swift
 // View lifecycle
-print("🖼️ 🎬 View appearing - current state: \(state)")
-print("🖼️ 🛑 View disappearing - cleaning up resources")
+Log.p(Log.app, Log.start, "View appearing - state: \(state)")
+Log.p(Log.app, Log.stop, "View disappearing - cleanup")
 
-// User session changes
-print("🔑 ⚡️ User session state changed: \(oldState) -> \(newState)")
+// User session
+Log.p(Log.user, Log.event, "Session changed: \(oldState) -> \(newState)")
 
-// Data model updates
-print("📊 ⚡️ Model updated: \(changes)")
+// Data updates
+Log.p(Log.firebase, Log.update, "Model updated: \(changes)")
 ```
 
-### 2. Asynchronous Operations
-Log the full lifecycle of async operations to track their progress:
+### 2. Async Operations
 ```swift
-// Operation start
-print("🔄 🎬 Starting async operation: \(operationId)")
+// Start
+Log.p(Log.upload, Log.start, "Starting upload: \(operationId)")
 
-// Progress/state changes
-print("🔄 📊 Operation \(operationId) progress: \(progress)%")
+// Progress
+Log.p(Log.upload, Log.event, "Upload progress: \(progress)%")
 
-// Completion (success/failure)
-print("🔄 ✅ Operation \(operationId) completed successfully")
-print("❌ 💥 Operation \(operationId) failed: \(error)")
+// Completion
+Log.p(Log.upload, Log.stop, Log.success, "Upload completed")
+Log.p(Log.upload, Log.stop, Log.error, "Upload failed: \(error)")
 ```
 
-### 3. External Service Interactions
-Track all interactions with external services:
+### 3. Resource Management
 ```swift
-// Requests
-print("📤 🎬 Sending request to \(service): \(requestId)")
+// Allocation
+Log.p(Log.camera, Log.start, "Initializing camera")
+Log.p(Log.storage, Log.save, "Creating temp file: \(path)")
 
-// Responses
-print("📤 ✅ Received response for \(requestId)")
-print("❌ 🚫 Request \(requestId) failed: \(statusCode)")
+// Cleanup
+Log.p(Log.camera, Log.stop, "Releasing camera")
+Log.p(Log.storage, Log.delete, "Cleaning temp files")
 ```
 
-### 4. Resource Management
-Monitor resource allocation and cleanup:
+## Filtering & Debug Tools
+
+### Context Filtering
 ```swift
-// Resource allocation
-print("📸 🎬 Initializing camera session")
-print("💾 📁 Creating temporary file at: \(path)")
+// Only show video and firebase logs
+Log.enable(Log.video, Log.firebase)
 
-// Resource cleanup
-print("📸 🧹 Releasing camera session")
-print("💾 🗑️ Cleaning up temp files")
+// Hide storage logs
+Log.disable(Log.storage)
+
+// Show all logs
+Log.enableAll()
 ```
 
-### 5. Critical User Actions
-Log important user interactions that trigger significant operations:
+### Source Information
 ```swift
-// Action initiation
-print("👆 🎬 User initiated \(action)")
-
-// Action completion
-print("👆 ✅ User action completed: \(result)")
+// Show [File.swift:123] in logs
+Log.toggleSourceInfo(true)
 ```
 
-## Strategic Logging Approach
+## Best Practices
 
-### 1. Breadcrumb Trail
-Leave a clear trail of execution flow:
-- Log entry and exit points of complex operations
-- Track decision points and condition evaluations
-- Note when expectations are met or violated
+1. **Always Include Context**
+   - Use the appropriate context emoji
+   - Add relevant IDs or identifiers
+   - Include state information when relevant
 
-### 2. State Verification
-Regularly verify and log system state:
-- Check resource availability before use
-- Validate data integrity at key points
-- Confirm proper cleanup after operations
+2. **Be Consistent**
+   - Follow the emoji pattern strictly
+   - Use the predefined constants (Log.video, Log.start, etc.)
+   - Don't create new emoji combinations
 
-### 3. Error Recovery Points
-Mark potential recovery points in the code:
-- Log state before risky operations
-- Track cleanup attempts after failures
-- Note successful recovery steps
+3. **Log Strategically**
+   - Entry/exit of important methods
+   - State changes and transitions
+   - Error conditions and recovery attempts
+   - Resource allocation/deallocation
 
-### 4. Performance Monitoring
-Track timing of critical operations:
+4. **Debug Information**
+   - Include file:line when debugging specific issues
+   - Use alert emojis to highlight important logs
+   - Filter by context when focusing on specific components
+
+5. **Performance**
+   - Logs are automatically disabled in Release builds
+   - Use context filtering to reduce noise during development
+   - Avoid expensive computations just for logging
+
+## Example Scenarios
+
+### Video Playback
 ```swift
-print("⏱️ 🎬 Starting operation at: \(startTime)")
-// ... operation ...
-print("⏱️ 📊 Operation took: \(duration)ms")
+Log.p(Log.video, Log.start, "Loading video: \(videoId)")
+Log.p(Log.video, Log.event, "Buffer status: \(percentage)%")
+Log.p(Log.video, Log.event, Log.warning, "Buffer below threshold")
+Log.p(Log.video, Log.stop, "Playback ended")
 ```
 
-### 5. Memory Management
-Monitor memory-critical operations:
+### Authentication
 ```swift
-print("📊 💾 Current memory usage: \(usage)MB")
-print("📊 ⚠️ Memory threshold reached, initiating cleanup")
+Log.p(Log.user, Log.start, "Login attempt: \(email)")
+Log.p(Log.user, Log.event, Log.error, "Invalid credentials")
+Log.p(Log.user, Log.event, Log.success, "Login successful")
 ```
 
-## Implementation Best Practices
-
-### 1. Consistent Format
-Each log should include:
-- Component identifier (emoji)
-- Operation type (emoji)
-- Clear, descriptive message
-- Relevant state/data
-- Timestamp (when needed)
-
-### 2. Log Levels
-Use appropriate logging levels:
-- Debug: Detailed flow information
-- Info: Normal operation events
-- Warning: Potential issues
-- Error: Operation failures
-- Critical: System-wide issues
-
-### 3. Context Preservation
-Include sufficient context:
+### File Operations
 ```swift
-print("📸 📊 Operation failed - Context:")
-print("  - Current state: \(state)")
-print("  - Last successful operation: \(lastOp)")
-print("  - Resource status: \(resources)")
+Log.p(Log.storage, Log.start, "Saving video")
+Log.p(Log.storage, Log.save, "Created temp file")
+Log.p(Log.storage, Log.event, "Processing: \(progress)%")
+Log.p(Log.storage, Log.stop, Log.success, "Video saved")
 ```
-
-### 4. Recovery Information
-Include information needed for recovery:
-```swift
-print("❌ 💥 Operation failed, recovery options:")
-print("  - Retry count: \(retries)")
-print("  - Fallback path: \(fallback)")
-print("  - Cleanup needed: \(cleanup)")
-```
-
-## Key Points to Remember
-
-1. **Log for Your Future Self**
-   - Assume you won't remember the context
-   - Include all information needed to understand the situation
-   - Make logs searchable and meaningful
-
-2. **Log for Time Pressure**
-   - Make critical issues immediately visible
-   - Include enough context to quickly identify problems
-   - Group related logs logically
-
-3. **Log for Recovery**
-   - Include state information needed to recover
-   - Log cleanup and retry attempts
-   - Track resource allocation and release
-
-4. **Log for Clarity**
-   - Use consistent patterns
-   - Make log messages self-explanatory
-   - Include relevant IDs and timestamps
 
 Remember: When in doubt, log more rather than less. You can always filter logs, but you can't recover information that wasn't logged.

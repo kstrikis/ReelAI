@@ -2,12 +2,94 @@ import SwiftUI
 import AVKit
 import FirebaseFirestore
 import FirebaseAuth
+import Combine
+
+class VideoPlayerObserver: ObservableObject {
+    private var timeObserver: Any?
+    private var cancellables = Set<AnyCancellable>()
+    private let player: AVPlayer
+    private let video: Video
+    
+    init(player: AVPlayer, video: Video) {
+        self.player = player
+        self.video = video
+        setupObservers()
+    }
+    
+    private func setupObservers() {
+        // Monitor buffering state
+        player.currentItem?.publisher(for: \.isPlaybackLikelyToKeepUp)
+            .sink { isLikelyToKeepUp in
+                if isLikelyToKeepUp {
+                    Log.p(Log.video, Log.event, nil, "Buffer sufficient for video: \(self.video.id)")
+                } else {
+                    Log.p(Log.video, Log.event, Log.warning, "Buffer depleted for video: \(self.video.id)")
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Monitor playback status
+        player.currentItem?.publisher(for: \.status)
+            .sink { status in
+                switch status {
+                case .readyToPlay:
+                    Log.p(Log.video, Log.event, Log.success, "Video ready to play: \(self.video.id)")
+                case .failed:
+                    if let error = self.player.currentItem?.error {
+                        Log.p(Log.video, Log.event, Log.error, "Playback failed: \(error.localizedDescription)")
+                    }
+                default:
+                    Log.p(Log.video, Log.event, nil, "Playback status changed: \(status.rawValue)")
+                }
+            }
+            .store(in: &cancellables)
+        
+        // Observe playback progress
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+            guard let self = self else { return }
+            let currentTime = time.seconds
+            let duration = self.player.currentItem?.duration.seconds ?? 0
+            if duration > 0 {
+                // Log only significant progress points
+                if currentTime.truncatingRemainder(dividingBy: 5) < 0.5 { // Log every 5 seconds
+                    Log.p(Log.video, Log.event, nil, "Playback at \(Int(currentTime))s/\(Int(duration))s")
+                }
+            }
+        }
+        
+        // Monitor for playback stalls
+        NotificationCenter.default.publisher(for: .AVPlayerItemPlaybackStalled, object: player.currentItem)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                Log.p(Log.video, Log.event, Log.warning, "Playback stalled: \(self.video.id)")
+            }
+            .store(in: &cancellables)
+        
+        // Monitor for playback completion
+        NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
+            .sink { [weak self] _ in
+                guard let self = self else { return }
+                Log.p(Log.video, Log.event, nil, "Video completed, looping: \(self.video.id)")
+                self.player.seek(to: .zero)
+                self.player.play()
+            }
+            .store(in: &cancellables)
+    }
+    
+    deinit {
+        if let timeObserver = timeObserver {
+            player.removeTimeObserver(timeObserver)
+        }
+    }
+}
 
 struct FeedVideoPlayerView: View {
     let video: Video
     let player: AVPlayer?
     let size: CGSize
     
+    @StateObject private var observer: VideoPlayerObserver
     @State private var isPlaying = false
     @State private var showControls = true
     @State private var progress: Double = 0
@@ -26,6 +108,17 @@ struct FeedVideoPlayerView: View {
         self.size = size
         _localLikeCount = State(initialValue: video.engagement.likeCount)
         _localDislikeCount = State(initialValue: video.engagement.dislikeCount)
+        
+        // Initialize observer with a dummy player if none provided
+        if let player = player {
+            _observer = StateObject(wrappedValue: VideoPlayerObserver(player: player, video: video))
+        } else {
+            // Create a dummy player that won't be used
+            let dummyPlayer = AVPlayer()
+            _observer = StateObject(wrappedValue: VideoPlayerObserver(player: dummyPlayer, video: video))
+        }
+        
+        Log.p(Log.video, Log.event, "Initializing player view for video: \(video.id)")
     }
     
     var body: some View {
@@ -36,12 +129,13 @@ struct FeedVideoPlayerView: View {
                 VideoPlayer(player: player)
                     .frame(width: size.width, height: size.height)
                     .onAppear {
+                        Log.p(Log.video, Log.start, nil, "Starting playback for video: \(video.id)")
                         player.play()
                         isPlaying = true
-                        setupObservers(for: player)
                         checkUserReaction()
                     }
                     .onDisappear {
+                        Log.p(Log.video, Log.stop, nil, "Stopping playback for video: \(video.id)")
                         player.pause()
                         isPlaying = false
                     }
@@ -160,7 +254,12 @@ struct FeedVideoPlayerView: View {
     }
     
     private func checkUserReaction() {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
+        guard let userId = Auth.auth().currentUser?.uid else {
+            Log.p(Log.firebase, Log.read, Log.warning, "No user ID available for reaction check")
+            return
+        }
+        
+        Log.p(Log.firebase, Log.read, nil, "Checking user reaction for video: \(video.id)")
         
         db.collection("videos")
             .document(video.id)
@@ -168,28 +267,34 @@ struct FeedVideoPlayerView: View {
             .document(userId)
             .getDocument { snapshot, error in
                 if let error = error {
-                    AppLogger.dbError("Error checking user reaction", error: error, collection: "reactions")
+                    Log.p(Log.firebase, Log.read, Log.error, "Failed to check reaction: \(error.localizedDescription)")
                     return
                 }
                 
                 if let data = snapshot?.data(),
                    let isLike = data["isLike"] as? Bool {
+                    Log.p(Log.firebase, Log.read, Log.success, "Found user reaction: \(isLike ? "like" : "dislike")")
                     hasLiked = isLike
                     hasDisliked = !isLike
+                } else {
+                    Log.p(Log.firebase, Log.read, nil, "No existing reaction found")
                 }
             }
     }
     
     private func handleLike() {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
+        guard let userId = Auth.auth().currentUser?.uid else {
+            Log.p(Log.firebase, Log.event, Log.warning, "No user ID available for like action")
+            return
+        }
         
         if hasLiked {
-            // Remove like
+            Log.p(Log.firebase, Log.update, "Removing like from video: \(video.id)")
             removeReaction(userId: userId)
             localLikeCount -= 1
             hasLiked = false
         } else {
-            // Add like
+            Log.p(Log.firebase, Log.update, "Adding like to video: \(video.id)")
             if hasDisliked {
                 localDislikeCount -= 1
             }
@@ -283,29 +388,6 @@ struct FeedVideoPlayerView: View {
                         }
                     }
             }
-    }
-    
-    private func setupObservers(for player: AVPlayer) {
-        // Observe playback progress
-        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { time in
-            let currentTime = time.seconds
-            let duration = player.currentItem?.duration.seconds ?? 0
-            if duration > 0 {
-                progress = currentTime / duration
-                self.duration = duration
-            }
-        }
-        
-        // Reset progress when item finishes playing
-        NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem,
-            queue: .main
-        ) { _ in
-            player.seek(to: .zero)
-            player.play()
-        }
     }
 }
 

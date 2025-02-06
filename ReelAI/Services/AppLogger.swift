@@ -179,3 +179,123 @@ extension AppLogger {
         print("🔥 🗑️ \(collection): \(message)")
     }
 }
+
+/// Simple, reliable logging that works everywhere
+enum Log {
+    // MARK: - Log Filtering
+    
+    /// Set of enabled contexts. If empty, all contexts are enabled
+    private static var enabledContexts: Set<String> = []
+    
+    /// Whether to show file and line information in logs
+    private static var showSourceInfo = true
+    
+    /// Enable logging for specific contexts
+    static func enable(_ contexts: String...) {
+        enabledContexts.formUnion(contexts)
+    }
+    
+    /// Disable logging for specific contexts
+    static func disable(_ contexts: String...) {
+        enabledContexts.subtract(contexts)
+    }
+    
+    /// Enable all logging contexts
+    static func enableAll() {
+        enabledContexts.removeAll()
+    }
+    
+    /// Toggle source info display
+    static func toggleSourceInfo(_ enabled: Bool) {
+        showSourceInfo = enabled
+    }
+    
+    // MARK: - Logging Function
+    
+    static func p(
+        _ context: String = "📱",
+        _ action: String = "⚡️",
+        _ alert: String? = nil,
+        _ message: String? = nil,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        #if DEBUG
+        // Check if this context is enabled (if filters are active)
+        if !enabledContexts.isEmpty && !enabledContexts.contains(context) {
+            return
+        }
+        
+        // Ensure we always have some output even if parameters are nil or invalid
+        let timestamp = Date().formatted(date: .omitted, time: .standard)
+        let thread = Thread.isMainThread ? "main" : Thread.current.description
+        
+        // Build log with safe fallbacks for everything
+        var log = "[\(timestamp)][\(thread)]"
+        
+        // Add source info if enabled
+        if showSourceInfo {
+            let fileName = (file as NSString).lastPathComponent
+            log += "[\(fileName):\(line)]"
+        }
+        
+        // Add context with fallback
+        log += " \(context.isEmpty ? "📱" : context)"
+        
+        // Add action with fallback
+        log += " \(action.isEmpty ? "⚡️" : action)"
+        
+        // Add alert if present
+        if let alert = alert, !alert.isEmpty {
+            log += " \(alert)"
+        }
+        
+        // Add message with fallback
+        if let message = message, !message.isEmpty {
+            log += " \(message)"
+        } else {
+            log += " <no message>"
+        }
+        
+        // Both print and os_log for reliability, wrapped in do-catch
+        do {
+            print(log)
+            os_log("%{public}@", log)
+        } catch {
+            // If all else fails, use print with a simple format
+            print("🚨 Logger failed, raw message: \(message ?? "<no message>")")
+        }
+        #endif
+    }
+    
+    // MARK: - Context Emojis
+    static let video = "🎥"    // Video Player
+    static let storage = "📼"   // Video Storage/Files
+    static let upload = "📤"    // Upload/Download
+    static let firebase = "🔥"  // Firebase/Firestore
+    static let user = "👤"      // User/Auth
+    static let app = "📱"       // App/UI
+    static let camera = "🎬"    // Camera
+    
+    // MARK: - Action Emojis
+    static let start = "▶️"     // Start/Begin
+    static let stop = "⏹️"      // Stop/End
+    static let save = "💾"      // Save/Write
+    static let read = "🔍"      // Read/Query
+    static let update = "🔄"    // Update/Change
+    static let delete = "🗑️"    // Delete
+    static let event = "⚡️"     // Event/Trigger
+    
+    // MARK: - Alert Emojis (optional)
+    static let error = "❌"     // Error
+    static let warning = "⚠️"   // Warning
+    static let critical = "🚨"  // Critical
+    static let success = "✨"   // Important Success
+}
+
+// Example usage:
+// Log.enable(Log.video, Log.firebase)  // Only show video and firebase logs
+// Log.disable(Log.storage)             // Hide storage logs
+// Log.enableAll()                      // Show all logs
+// Log.toggleSourceInfo(true)           // Show file:line in logs
