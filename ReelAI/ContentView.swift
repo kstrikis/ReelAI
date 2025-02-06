@@ -25,44 +25,9 @@ struct ContentView: View {
                 AIToolsView()
                     .tag(1)
 
-                // Main Content (Center-Right)
-                ZStack {
-                    // Gradient background
-                    LinearGradient(
-                        colors: [.gray.opacity(0.3), .gray.opacity(0.2)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    )
-                    .ignoresSafeArea()
-                    
-                    VStack(spacing: 20) {
-                        Text("Firestore Test")
-                            .font(.title)
-                            .foregroundColor(.white)
-                        
-                        Button(action: testFirestoreWrite) {
-                            Text("Test Write to Firestore")
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .padding()
-                                .background(Color.blue)
-                                .cornerRadius(10)
-                        }
-                        
-                        Button(action: testFirestoreRead) {
-                            Text("Test Read from Firestore")
-                                .fontWeight(.semibold)
-                                .foregroundColor(.white)
-                                .padding()
-                                .background(Color.green)
-                                .cornerRadius(10)
-                        }
-                        
-                        Spacer()
-                    }
-                    .padding()
-                }
-                .tag(2)
+                // Video List (Center-Right)
+                VideoListView()
+                    .tag(2)
 
                 // Menu View (Right)
                 SideMenuView(isPresented: .constant(true))

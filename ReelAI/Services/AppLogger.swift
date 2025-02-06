@@ -7,7 +7,7 @@ import os
 struct AppLogger {
     // MARK: - Properties
 
-    static let subsystem = Bundle.main.bundleIdentifier ?? "com.kstrikis.ReelAI"
+    static let subsystem = Bundle.main.bundleIdentifier ?? "com.edgineer.ReelAI"
 
     // MARK: - Category Loggers
 

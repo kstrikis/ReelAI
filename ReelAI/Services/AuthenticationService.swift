@@ -204,7 +204,7 @@ final class AuthenticationService: ObservableObject {
 
         guard let userId = currentUser?.uid else {
             let error = NSError(
-                domain: "com.kstrikis.ReelAI",
+                domain: "com.edgineer.ReelAI",
                 code: -1,
                 userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
             )
@@ -230,7 +230,7 @@ final class AuthenticationService: ObservableObject {
                         return self.updateProfileInFirestore(profile, userId: userId)
                     }
                     return Fail(error: NSError(
-                        domain: "com.kstrikis.ReelAI",
+                        domain: "com.edgineer.ReelAI",
                         code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Username is already taken"]
                     )).eraseToAnyPublisher()
@@ -339,7 +339,7 @@ final class AuthenticationService: ObservableObject {
 
         guard let userId = currentUser?.uid else {
             return Fail(error: NSError(
-                domain: "com.kstrikis.ReelAI",
+                domain: "com.edgineer.ReelAI",
                 code: -1,
                 userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
             ))
@@ -383,7 +383,7 @@ final class AuthenticationService: ObservableObject {
 
                 guard let user = result?.user else {
                     let error = NSError(
-                        domain: "com.kstrikis.ReelAI",
+                        domain: "com.edgineer.ReelAI",
                         code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "User not found after sign in"]
                     )
@@ -435,7 +435,7 @@ final class AuthenticationService: ObservableObject {
 
                 guard let user = result?.user else {
                     let error = NSError(
-                        domain: "com.kstrikis.ReelAI",
+                        domain: "com.edgineer.ReelAI",
                         code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "User not found after sign up"]
                     )

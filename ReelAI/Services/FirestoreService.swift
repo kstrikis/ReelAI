@@ -132,7 +132,7 @@ final class FirestoreService {
             // Verify Firebase Auth state first
             guard let currentUser = Auth.auth().currentUser,
                   currentUser.uid == userId else {
-                let error = NSError(domain: "com.kstrikis.ReelAI",
+                let error = NSError(domain: "com.edgineer.ReelAI",
                                   code: -1,
                                   userInfo: [NSLocalizedDescriptionKey: "Authentication mismatch or missing"])
                 AppLogger.dbError("Failed to create video - auth mismatch", error: error, collection: "videos")
@@ -242,7 +242,7 @@ final class FirestoreService {
     
     func addComment(to videoId: String, text: String, replyTo: String? = nil) -> AnyPublisher<String, Error> {
         guard let currentUser = Auth.auth().currentUser else {
-            return Fail(error: NSError(domain: "com.kstrikis.ReelAI",
+            return Fail(error: NSError(domain: "com.edgineer.ReelAI",
                                      code: -1,
                                      userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]))
                 .eraseToAnyPublisher()
@@ -374,7 +374,7 @@ final class FirestoreService {
     
     func updateCommentReaction(videoId: String, commentId: String, isLike: Bool, add: Bool) -> AnyPublisher<Void, Error> {
         guard let currentUser = Auth.auth().currentUser else {
-            return Fail(error: NSError(domain: "com.kstrikis.ReelAI",
+            return Fail(error: NSError(domain: "com.edgineer.ReelAI",
                                      code: -1,
                                      userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]))
                 .eraseToAnyPublisher()
