@@ -423,7 +423,6 @@
 				DEVELOPMENT_TEAM = JT43SMUL3F;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ReelAI/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We record camera video and audio when you record your own clips.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need this for your recordings.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "To save to your photo library";

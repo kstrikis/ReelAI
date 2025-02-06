@@ -1,6 +1,8 @@
 import SwiftUI
 import FirebaseFirestoreCombineSwift
+import FirebaseFirestore
 import Combine
+import ReelAI  // Import the module containing our models
 
 struct VideoListView: View {
     @StateObject private var viewModel = VideoListViewModel()
@@ -12,6 +14,15 @@ struct VideoListView: View {
             if viewModel.isLoading {
                 ProgressView()
                     .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            } else if viewModel.videos.isEmpty {
+                VStack {
+                    Text("No videos available")
+                        .foregroundColor(.white)
+                    Button("Retry") {
+                        viewModel.loadVideos()
+                    }
+                    .foregroundColor(.blue)
+                }
             } else {
                 ScrollView {
                     LazyVStack(spacing: 16) {
@@ -73,73 +84,61 @@ class VideoListViewModel: ObservableObject {
     private let db = Firestore.firestore()
     
     func loadVideos() {
-        AppLogger.methodEntry(AppLogger.ui, "Loading videos from Firestore")
-        isLoading = true
+        AppLogger.dbQuery("Loading videos from Firestore", collection: "videos")
+        
+        // Set loading state on main thread
+        DispatchQueue.main.async {
+            self.isLoading = true
+            AppLogger.debug("Set isLoading to true")
+        }
         
         db.collection("videos")
             .order(by: "createdAt", descending: true)
             .limit(to: 50)
-            .publisher()
-            .map { querySnapshot -> [Video] in
-                AppLogger.info(AppLogger.ui, "Received \(querySnapshot.documents.count) videos from Firestore")
+            .snapshotPublisher()
+            .map { (querySnapshot: QuerySnapshot) -> [Video] in
+                AppLogger.dbSuccess("Received \(querySnapshot.documents.count) videos", collection: "videos")
                 return querySnapshot.documents.compactMap { document in
                     do {
-                        var video = try document.data(as: Video.self)
-                        video.id = document.documentID
-                        return video
+                        let video = try document.data(as: Video.self)
+                        return Video(
+                            id: document.documentID,
+                            ownerId: video.ownerId,
+                            username: video.username,
+                            title: video.title,
+                            description: video.description,
+                            mediaUrl: video.mediaUrl,
+                            createdAt: video.createdAt,
+                            updatedAt: video.updatedAt,
+                            engagement: video.engagement
+                        )
                     } catch {
-                        AppLogger.error(AppLogger.ui, "Error decoding video document: \(error)")
+                        AppLogger.dbError("Error decoding video document", error: error, collection: "videos")
                         return nil
                     }
                 }
             }
             .receive(on: DispatchQueue.main)
-            .sink { completion in
+            .sink(receiveCompletion: { [weak self] completion in
+                guard let self = self else { return }
+                
+                // Always reset loading state
                 self.isLoading = false
+                AppLogger.debug("Set isLoading to false")
+                
                 if case .failure(let error) = completion {
-                    AppLogger.error(AppLogger.ui, "Error loading videos: \(error)")
+                    AppLogger.dbError("Error loading videos", error: error, collection: "videos")
                 }
-            } receiveValue: { videos in
+            }, receiveValue: { [weak self] videos in
+                guard let self = self else { return }
+                
                 self.videos = videos
-                AppLogger.methodExit(AppLogger.ui, "Successfully loaded \(videos.count) videos")
-            }
+                // Ensure loading is false after setting videos
+                self.isLoading = false
+                AppLogger.debug("Set isLoading to false after receiving \(videos.count) videos")
+                AppLogger.dbSuccess("Successfully loaded \(videos.count) videos", collection: "videos")
+            })
             .store(in: &cancellables)
-    }
-}
-
-// Video model matching our Firestore schema
-struct Video: Codable, Identifiable {
-    var id: String?
-    let ownerId: String
-    let username: String
-    let title: String
-    let description: String?
-    let mediaUrl: String
-    let createdAt: Date
-    let updatedAt: Date
-    let engagement: Engagement
-    
-    enum CodingKeys: String, CodingKey {
-        case id
-        case ownerId
-        case username
-        case title
-        case description
-        case mediaUrl
-        case createdAt
-        case updatedAt
-        case engagement
-    }
-}
-
-struct Engagement: Codable {
-    let viewCount: Int
-    let likeCount: Int
-    let dislikeCount: Int
-    let tags: [String: Int]
-    
-    static var empty: Engagement {
-        Engagement(viewCount: 0, likeCount: 0, dislikeCount: 0, tags: [:])
     }
 }
 
