@@ -4,6 +4,7 @@ import SwiftUI
 struct DebugMenuView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showVideoList = false
+    @State private var showVideoFeed = false
     
     var body: some View {
         List {
@@ -13,6 +14,13 @@ struct DebugMenuView: View {
                     showVideoList = true
                 }) {
                     Label("Video List", systemImage: "play.rectangle.on.rectangle")
+                }
+                
+                Button(action: {
+                    Log.p(Log.app, Log.event, "Debug: Opening video feed")
+                    showVideoFeed = true
+                }) {
+                    Label("Video Feed", systemImage: "play.square.stack")
                 }
             }
             
@@ -47,6 +55,13 @@ struct DebugMenuView: View {
             NavigationView {
                 VideoListView()
                     .navigationTitle("Debug: Video List")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .sheet(isPresented: $showVideoFeed) {
+            NavigationView {
+                VideoFeedView()
+                    .navigationTitle("Debug: Video Feed")
                     .navigationBarTitleDisplayMode(.inline)
             }
         }
