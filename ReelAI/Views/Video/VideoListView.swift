@@ -54,7 +54,7 @@ struct VideoListItemView: View {
                 .font(.headline)
                 .foregroundColor(.white)
             
-            Text(video.mediaUrl)
+            Text(video.computedMediaUrl)
                 .font(.caption)
                 .foregroundColor(.gray)
                 .lineLimit(1)
@@ -115,7 +115,6 @@ class VideoListViewModel: ObservableObject {
                             username: video.username,
                             title: video.title,
                             description: video.description,
-                            mediaUrl: video.mediaUrl,
                             createdAt: video.createdAt,
                             updatedAt: video.updatedAt,
                             engagement: video.engagement

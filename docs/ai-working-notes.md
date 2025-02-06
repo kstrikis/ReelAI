@@ -58,7 +58,7 @@ B. Videos Collection ("videos")
    • username (String) – Creator's username (denormalized for efficiency)
    • title (String) – Video title
    • description (String, optional) – Full description
-   • mediaUrl (String) – URL to the video file in Storage
+   • computedMediaUrl (String) – Computed URL to the video file in Storage, derived from video ID and owner ID
    • createdAt (Timestamp) – Creation time
    • updatedAt (Timestamp) – Last modification time
   – Engagement Sub-object:
@@ -73,7 +73,7 @@ B. Videos Collection ("videos")
     "username": "creator",
     "title": "My Cool Video",
     "description": "Check this out!",
-    "mediaUrl": "gs://bucket/videos/video123.mp4",
+    "computedMediaUrl": "// mediaUrl is now computed from video ID and owner ID",
     "createdAt": <Timestamp>,
     "updatedAt": <Timestamp>,
     "engagement": {

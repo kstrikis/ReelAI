@@ -109,12 +109,11 @@ final class FirestoreService {
     
     // MARK: - Video Operations
     
-    func createVideo(title: String, description: String?, mediaUrl: String, userId: String, username: String) -> AnyPublisher<String, Error> {
+    func createVideo(title: String, description: String?, userId: String, username: String) -> AnyPublisher<String, Error> {
         Log.p(Log.firebase, Log.save, "Creating new video document")
         Log.p(Log.firebase, Log.event, "Video metadata:")
         Log.p(Log.firebase, Log.event, "Title: \(title)")
         Log.p(Log.firebase, Log.event, "User ID: \(userId)")
-        Log.p(Log.firebase, Log.event, "Media URL: \(mediaUrl)")
         
         let video = Video(
             id: UUID().uuidString,  // Will be replaced by Firestore document ID
@@ -122,7 +121,6 @@ final class FirestoreService {
             username: username,
             title: title,
             description: description,
-            mediaUrl: mediaUrl,
             createdAt: Date(),      // Will be replaced by server timestamp
             updatedAt: Date(),      // Will be replaced by server timestamp
             engagement: .empty

@@ -442,37 +442,45 @@ class PublishingViewModel: ObservableObject {
             description: description.isEmpty ? nil : description
         )
         .receive(on: DispatchQueue.main)
-        .sink { [weak self] state in
-            guard let self = self else { return }
-            
-            switch state {
-            case .creatingDocument:
-                Log.p(Log.video, Log.event, "Creating document")
-                self.publishState = "Creating document..."
-                
-            case let .uploading(progress):
-                Log.p(Log.video, Log.event, "Upload progress: \(Int(progress * 100))%")
-                self.uploadProgress = progress
-                self.publishState = "Uploading video: \(Int(progress * 100))%"
-                
-            case .updatingDocument:
-                Log.p(Log.video, Log.event, "Updating document")
-                self.publishState = "Finalizing..."
-                
-            case .completed:
-                Log.p(Log.video, Log.event, Log.success, "Upload completed successfully")
+        .sink(
+            receiveCompletion: { [weak self] completion in
+                guard let self = self else { return }
+                Log.p(Log.video, Log.event, "Upload publisher completed")
                 self.isUploading = false
-                self.showingSuccess = true
                 self.publishState = ""
+            },
+            receiveValue: { [weak self] state in
+                guard let self = self else { return }
                 
-            case let .error(error):
-                Log.p(Log.video, Log.event, Log.error, "Upload failed: \(error.localizedDescription)")
-                self.isUploading = false
-                self.errorMessage = error.localizedDescription
-                self.showingError = true
-                self.publishState = ""
+                switch state {
+                case .creatingDocument:
+                    Log.p(Log.video, Log.event, "Creating document")
+                    self.publishState = "Creating document..."
+                    
+                case let .uploading(progress):
+                    Log.p(Log.video, Log.event, "Upload progress: \(Int(progress * 100))%")
+                    self.uploadProgress = progress
+                    self.publishState = "Uploading video: \(Int(progress * 100))%"
+                    
+                case .updatingDocument:
+                    Log.p(Log.video, Log.event, "Updating document")
+                    self.publishState = "Finalizing..."
+                    
+                case .completed:
+                    Log.p(Log.video, Log.event, Log.success, "Upload completed successfully")
+                    self.isUploading = false
+                    self.showingSuccess = true
+                    self.publishState = ""
+                    
+                case let .error(error):
+                    Log.p(Log.video, Log.event, Log.error, "Upload failed: \(error.localizedDescription)")
+                    self.isUploading = false
+                    self.errorMessage = error.localizedDescription
+                    self.showingError = true
+                    self.publishState = ""
+                }
             }
-        }
+        )
         .store(in: &cancellables)
     }
     

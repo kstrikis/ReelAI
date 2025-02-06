@@ -110,7 +110,6 @@ class VideoFeedViewModel: ObservableObject {
                             username: video.username,
                             title: video.title,
                             description: video.description,
-                            mediaUrl: video.mediaUrl,
                             createdAt: video.createdAt,
                             updatedAt: video.updatedAt,
                             engagement: video.engagement
@@ -167,7 +166,6 @@ class VideoFeedViewModel: ObservableObject {
                             username: video.username,
                             title: video.title,
                             description: video.description,
-                            mediaUrl: video.mediaUrl,
                             createdAt: video.createdAt,
                             updatedAt: video.updatedAt,
                             engagement: video.engagement
@@ -214,8 +212,8 @@ class VideoFeedViewModel: ObservableObject {
     
     private func preloadVideo(_ video: Video) {
         Log.p(Log.video, Log.event, "Preloading video: \(video.id)")
-        guard let videoURL = URL(string: video.mediaUrl) else {
-            Log.p(Log.video, Log.event, Log.error, "Invalid video URL: \(video.mediaUrl)")
+        guard let videoURL = URL(string: video.computedMediaUrl) else {
+            Log.p(Log.video, Log.event, Log.error, "Invalid video URL: \(video.computedMediaUrl)")
             return
         }
         

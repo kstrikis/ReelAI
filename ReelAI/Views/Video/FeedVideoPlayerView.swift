@@ -427,7 +427,6 @@ struct FeedVideoPlayerView: View {
             username: "demo_user",
             title: "Sample Video",
             description: "This is a sample video description that might be a bit longer to test the layout.",
-            mediaUrl: "https://example.com/video.mp4",
             createdAt: Date(),
             updatedAt: Date(),
             engagement: Video.Engagement(
