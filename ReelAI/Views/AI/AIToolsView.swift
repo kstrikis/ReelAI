@@ -86,10 +86,10 @@ struct AIToolsView: View {
                             destinationView(for: tool)
                         } label: {
                             AIToolCard(tool: tool)
-                                .onTapGesture {
-                                    Log.p(Log.app, Log.event, "User selected AI tool: \(tool.rawValue)")
-                                }
                         }
+                        .simultaneousGesture(TapGesture().onEnded {
+                            Log.p(Log.app, Log.event, "User selected AI tool: \(tool.rawValue)")
+                        })
                     }
                 }
                 .padding()
