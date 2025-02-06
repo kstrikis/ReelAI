@@ -10,6 +10,11 @@ struct PublishingView: View {
     @EnvironmentObject private var authService: AuthenticationService
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: PublishingViewModel
+    @FocusState private var focusedField: Field?
+    
+    enum Field {
+        case title, description
+    }
     
     init(selectedVideo: URL? = nil) {
         Log.p(Log.video, Log.start, "Initializing PublishingView")
@@ -41,6 +46,7 @@ struct PublishingView: View {
                             set: { viewModel.handleTitleEdit($0) }
                         )
                     )
+                    .focused($focusedField, equals: .title)
                     
                     // Description using TextEditor for multiline support
                     TextEditor(text: $viewModel.description)
@@ -48,6 +54,7 @@ struct PublishingView: View {
                         .padding(8)
                         .background(Color.white)
                         .cornerRadius(10)
+                        .focused($focusedField, equals: .description)
                         .overlay(
                             Group {
                                 if viewModel.description.isEmpty {
@@ -87,7 +94,19 @@ struct PublishingView: View {
                     }
                 }
                 .padding()
+                .simultaneousGesture(
+                    TapGesture()
+                        .onEnded { _ in
+                            focusedField = nil
+                        }
+                )
             }
+            .simultaneousGesture(
+                DragGesture()
+                    .onChanged { _ in
+                        focusedField = nil
+                    }
+            )
         }
         .navigationTitle("Publish")
         .navigationBarTitleDisplayMode(.inline)
