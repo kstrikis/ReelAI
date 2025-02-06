@@ -4,6 +4,7 @@ struct SideMenuView: View {
     @EnvironmentObject private var authService: AuthenticationService
     @Binding var isPresented: Bool
     @State private var showProfile = false
+    @State private var showDebugMenu = false
 
     var body: some View {
         GeometryReader { geometry in
@@ -75,6 +76,22 @@ struct SideMenuView: View {
                                 .background(Color.gray.opacity(0.3))
                                 .padding(.vertical)
 
+                            #if DEBUG
+                            Group {
+                                MenuButton(
+                                    title: "Debug Tools",
+                                    systemImage: "hammer.fill",
+                                    action: {
+                                        showDebugMenu = true
+                                    }
+                                )
+                                
+                                Divider()
+                                    .background(Color.gray.opacity(0.3))
+                                    .padding(.vertical)
+                            }
+                            #endif
+
                             MenuButton(
                                 title: "Sign Out",
                                 systemImage: "rectangle.portrait.and.arrow.right",
@@ -94,6 +111,13 @@ struct SideMenuView: View {
         .sheet(isPresented: $showProfile) {
             ProfileView()
         }
+        #if DEBUG
+        .sheet(isPresented: $showDebugMenu) {
+            NavigationView {
+                DebugMenuView()
+            }
+        }
+        #endif
     }
 }
 
