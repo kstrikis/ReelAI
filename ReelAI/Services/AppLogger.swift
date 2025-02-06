@@ -2,141 +2,254 @@ import Foundation
 import os
 
 /// AppLogger provides a unified logging interface for the ReelAI app.
-/// It wraps Apple's unified logging system (os.Logger) to provide consistent,
-/// categorized logging across the application.
-struct AppLogger {
-    // MARK: - Properties
-
-    static let subsystem = Bundle.main.bundleIdentifier ?? "com.edgineer.ReelAI"
-
-    // MARK: - Category Loggers
-
-    /// Logger for authentication-related events
-    static let auth = Logger(subsystem: subsystem, category: "auth")
-
-    // swiftlint:disable:next orphaned_doc_comment
-    /// Logger for user interface events
-    // swiftlint:disable:next identifier_name
-    static let ui = Logger(subsystem: subsystem, category: "ui")
-
-    /// Logger for network operations
-    static let network = Logger(subsystem: subsystem, category: "network")
-
-    /// Logger for data operations
-    static let data = Logger(subsystem: subsystem, category: "data")
-
-    /// Logger for service operations
-    static let service = Logger(subsystem: subsystem, category: "service")
-
-    // MARK: - Convenience Methods
-
-    /// Logs method entry with parameters (if any)
-    /// - Parameters:
-    ///   - logger: The logger to use
-    ///   - method: The method name (defaults to current function name)
-    ///   - params: Optional parameters to log
-    static func methodEntry(
-        _ logger: Logger,
-        _ method: String = #function,
-        params: [String: Any]? = nil
-    ) {
-        if let params {
-            logger.debug("""
-            ➡️ Entering \(method, privacy: .public) with params: \
-            \(String(describing: params), privacy: .private)
-            """)
-        } else {
-            logger.debug("➡️ Entering \(method, privacy: .public)")
+/// It wraps Apple's unified logging system (os.Logger) and provides
+/// a protocol-based extensible logging system.
+enum Log {
+    // MARK: - Protocols for Extensibility
+    
+    /// Protocol for log contexts
+    protocol Context {
+        var emoji: String { get }
+        var name: String { get }
+    }
+    
+    /// Protocol for log actions
+    protocol Action {
+        var emoji: String { get }
+        var name: String { get }
+    }
+    
+    /// Protocol for log alerts
+    protocol Alert {
+        var emoji: String { get }
+        var name: String { get }
+    }
+    
+    // MARK: - Built-in Contexts
+    enum CoreContext: Context {
+        case video, storage, upload, firebase, user, app, camera
+        
+        var emoji: String {
+            switch self {
+            case .video: return "🎥"
+            case .storage: return "📼"
+            case .upload: return "📤"
+            case .firebase: return "🔥"
+            case .user: return "👤"
+            case .app: return "📱"
+            case .camera: return "🎬"
+            }
         }
+        
+        var name: String { String(describing: self) }
     }
-
-    /// Logs method exit with result (if any)
-    /// - Parameters:
-    ///   - logger: The logger to use
-    ///   - method: The method name (defaults to current function name)
-    ///   - result: Optional result to log
-    static func methodExit(
-        _ logger: Logger,
-        _ method: String = #function,
-        result: Any? = nil
-    ) {
-        if let result {
-            logger.debug("""
-            ⬅️ Exiting \(method, privacy: .public) with result: \
-            \(String(describing: result), privacy: .private)
-            """)
-        } else {
-            logger.debug("⬅️ Exiting \(method, privacy: .public)")
+    
+    // MARK: - Built-in Actions
+    enum CoreAction: Action {
+        case start, stop, save, read, update, delete, event
+        
+        var emoji: String {
+            switch self {
+            case .start: return "▶️"
+            case .stop: return "⏹️"
+            case .save: return "💾"
+            case .read: return "🔍"
+            case .update: return "🔄"
+            case .delete: return "🗑️"
+            case .event: return "⚡️"
+            }
         }
+        
+        var name: String { String(describing: self) }
     }
-
-    /// Logs an error with additional context
-    /// - Parameters:
-    ///   - logger: The logger to use
-    ///   - error: The error to log
-    ///   - context: Additional context about where/why the error occurred
-    static func error(
-        _ logger: Logger,
-        _ error: Error,
-        context: String? = nil
-    ) {
-        if let context {
-            logger.error("❌ Error in \(context, privacy: .public): \(error.localizedDescription, privacy: .public)")
-        } else {
-            logger.error("❌ Error: \(error.localizedDescription, privacy: .public)")
+    
+    // MARK: - Built-in Alerts
+    enum CoreAlert: Alert {
+        case error, warning, critical, success
+        
+        var emoji: String {
+            switch self {
+            case .error: return "❌"
+            case .warning: return "⚠️"
+            case .critical: return "🚨"
+            case .success: return "✨"
+            }
         }
+        
+        var name: String { String(describing: self) }
     }
-
-    /// Logs method entry with a message and source information
-    /// - Parameters:
-    ///   - message: The message to log
-    ///   - file: Source file name (automatically provided)
-    ///   - function: Function name (automatically provided)
-    ///   - line: Line number (automatically provided)
-    func methodEntry(
-        _ message: String,
-        file _: String = #file,
-        function _: String = #function,
-        line _: Int = #line
+    
+    // MARK: - Log Filtering
+    private static var enabledContexts: Set<String> = []
+    private static var showSourceInfo = true
+    private static let subsystem = Bundle.main.bundleIdentifier ?? "com.edgineer.ReelAI"
+    
+    static func enable(_ contexts: Context...) {
+        enabledContexts.formUnion(contexts.map { $0.emoji })
+    }
+    
+    static func disable(_ contexts: Context...) {
+        enabledContexts.subtract(contexts.map { $0.emoji })
+    }
+    
+    static func enableAll() {
+        enabledContexts.removeAll()
+    }
+    
+    static func toggleSourceInfo(_ enabled: Bool) {
+        showSourceInfo = enabled
+    }
+    
+    // MARK: - Logging Function
+    
+    static func p(
+        _ context: Context,
+        _ action: Action,
+        _ alert: Alert? = nil,
+        _ message: String? = nil,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
     ) {
-        AppLogger.debug("\(message)")
+        #if DEBUG
+        // Check if this context is enabled (if filters are active)
+        if !enabledContexts.isEmpty && !enabledContexts.contains(context.emoji) {
+            return
+        }
+        
+        // Ensure we always have some output even if parameters are nil or invalid
+        let timestamp = Date().formatted(date: .omitted, time: .standard)
+        let thread = Thread.isMainThread ? "main" : Thread.current.description
+        
+        // Build log with safe fallbacks for everything
+        var log = "[\(timestamp)][\(thread)]"
+        
+        // Add source info if enabled
+        if showSourceInfo {
+            let fileName = (file as NSString).lastPathComponent
+            log += "[\(fileName):\(line)]"
+        }
+        
+        // Add context and action
+        log += " \(context.emoji) \(action.emoji)"
+        
+        // Add alert if present
+        if let alert = alert {
+            log += " \(alert.emoji)"
+        }
+        
+        // Add message with fallback
+        if let message = message, !message.isEmpty {
+            log += " \(message)"
+        } else {
+            log += " <no message>"
+        }
+        
+        // Both print and os_log for reliability, wrapped in do-catch
+        do {
+            print(log)
+            let logger = Logger(subsystem: subsystem, category: context.name)
+            logger.debug("\(log, privacy: .public)")
+        } catch {
+            // If all else fails, use print with a simple format
+            print("🚨 Logger failed, raw message: \(message ?? "<no message>")")
+        }
+        #endif
     }
-
-    /// Logs method exit with a message and source information
-    /// - Parameters:
-    ///   - message: The message to log
-    ///   - file: Source file name (automatically provided)
-    ///   - function: Function name (automatically provided)
-    ///   - line: Line number (automatically provided)
-    func methodExit(
-        _ message: String,
-        file _: String = #file,
-        function _: String = #function,
-        line _: Int = #line
-    ) {
-        AppLogger.debug("\(message)")
-    }
+    
+    // MARK: - Convenience Properties
+    
+    // Core contexts
+    static let video = CoreContext.video
+    static let storage = CoreContext.storage
+    static let upload = CoreContext.upload
+    static let firebase = CoreContext.firebase
+    static let user = CoreContext.user
+    static let app = CoreContext.app
+    static let camera = CoreContext.camera
+    
+    // Core actions
+    static let start = CoreAction.start
+    static let stop = CoreAction.stop
+    static let save = CoreAction.save
+    static let read = CoreAction.read
+    static let update = CoreAction.update
+    static let delete = CoreAction.delete
+    static let event = CoreAction.event
+    
+    // Core alerts
+    static let error = CoreAlert.error
+    static let warning = CoreAlert.warning
+    static let critical = CoreAlert.critical
+    static let success = CoreAlert.success
 }
 
-// MARK: - Debug Convenience Extensions
+// MARK: - Feature-Specific Contexts
 
-#if DEBUG
-    extension AppLogger {
-        /// Logs a debug message with the file and line number
-        static func debug(
-            _ message: String,
-            file: String = #file,
-            line: Int = #line
-        ) {
-            let fileName = (file as NSString).lastPathComponent
-            print("🪲 DEBUG: \(fileName):\(line) - \(message)")  // Changed to print
-            
-            // Also log to system logger for good measure
-            let logger = Logger(subsystem: subsystem, category: "debug")
-            logger.debug("📝 \(fileName):\(line) - \(message, privacy: .public)")
+extension Log {
+    // Social Features
+    enum SocialContext: Log.Context {
+        case feed, comments, likes, shares, trending
+        
+        var emoji: String {
+            switch self {
+            case .feed: return "📱"
+            case .comments: return "💬"
+            case .likes: return "❤️"
+            case .shares: return "↗️"
+            case .trending: return "📈"
+            }
         }
+        
+        var name: String { String(describing: self) }
     }
-#endif
+    
+    static let social_feed = SocialContext.feed
+    static let social_comments = SocialContext.comments
+    static let social_likes = SocialContext.likes
+    static let social_shares = SocialContext.shares
+    static let social_trending = SocialContext.trending
+    
+    // Story Generation Features
+    enum StoryContext: Log.Context {
+        case prompt, generation, editing
+        
+        var emoji: String {
+            switch self {
+            case .prompt: return "✍️"
+            case .generation: return "📖"
+            case .editing: return "✂️"
+            }
+        }
+        
+        var name: String { String(describing: self) }
+    }
+    
+    static let story_prompt = StoryContext.prompt
+    static let story_generation = StoryContext.generation
+    static let story_editing = StoryContext.editing
+    
+    // Audio Features
+    enum AudioContext: Log.Context {
+        case voiceover, music, effects, mixing
+        
+        var emoji: String {
+            switch self {
+            case .voiceover: return "🎤"
+            case .music: return "🎵"
+            case .effects: return "🔊"
+            case .mixing: return "🎚️"
+            }
+        }
+        
+        var name: String { String(describing: self) }
+    }
+    
+    static let audio_voiceover = AudioContext.voiceover
+    static let audio_music = AudioContext.music
+    static let audio_effects = AudioContext.effects
+    static let audio_mixing = AudioContext.mixing
+}
 
 extension AppLogger {
     // Emoji categories for print statements
@@ -180,122 +293,27 @@ extension AppLogger {
     }
 }
 
-/// Simple, reliable logging that works everywhere
-enum Log {
-    // MARK: - Log Filtering
-    
-    /// Set of enabled contexts. If empty, all contexts are enabled
-    private static var enabledContexts: Set<String> = []
-    
-    /// Whether to show file and line information in logs
-    private static var showSourceInfo = true
-    
-    /// Enable logging for specific contexts
-    static func enable(_ contexts: String...) {
-        enabledContexts.formUnion(contexts)
-    }
-    
-    /// Disable logging for specific contexts
-    static func disable(_ contexts: String...) {
-        enabledContexts.subtract(contexts)
-    }
-    
-    /// Enable all logging contexts
-    static func enableAll() {
-        enabledContexts.removeAll()
-    }
-    
-    /// Toggle source info display
-    static func toggleSourceInfo(_ enabled: Bool) {
-        showSourceInfo = enabled
-    }
-    
-    // MARK: - Logging Function
-    
-    static func p(
-        _ context: String = "📱",
-        _ action: String = "⚡️",
-        _ alert: String? = nil,
-        _ message: String? = nil,
-        file: String = #file,
-        function: String = #function,
-        line: Int = #line
-    ) {
-        #if DEBUG
-        // Check if this context is enabled (if filters are active)
-        if !enabledContexts.isEmpty && !enabledContexts.contains(context) {
-            return
+// Example of how to extend with new contexts:
+extension Log {
+    enum AIContext: Log.Context {
+        case training, inference, pipeline
+        
+        var emoji: String {
+            switch self {
+            case .training: return "🧠"
+            case .inference: return "🤖"
+            case .pipeline: return "⚙️"
+            }
         }
         
-        // Ensure we always have some output even if parameters are nil or invalid
-        let timestamp = Date().formatted(date: .omitted, time: .standard)
-        let thread = Thread.isMainThread ? "main" : Thread.current.description
-        
-        // Build log with safe fallbacks for everything
-        var log = "[\(timestamp)][\(thread)]"
-        
-        // Add source info if enabled
-        if showSourceInfo {
-            let fileName = (file as NSString).lastPathComponent
-            log += "[\(fileName):\(line)]"
-        }
-        
-        // Add context with fallback
-        log += " \(context.isEmpty ? "📱" : context)"
-        
-        // Add action with fallback
-        log += " \(action.isEmpty ? "⚡️" : action)"
-        
-        // Add alert if present
-        if let alert = alert, !alert.isEmpty {
-            log += " \(alert)"
-        }
-        
-        // Add message with fallback
-        if let message = message, !message.isEmpty {
-            log += " \(message)"
-        } else {
-            log += " <no message>"
-        }
-        
-        // Both print and os_log for reliability, wrapped in do-catch
-        do {
-            print(log)
-            os_log("%{public}@", log)
-        } catch {
-            // If all else fails, use print with a simple format
-            print("🚨 Logger failed, raw message: \(message ?? "<no message>")")
-        }
-        #endif
+        var name: String { String(describing: self) }
     }
     
-    // MARK: - Context Emojis
-    static let video = "🎥"    // Video Player
-    static let storage = "📼"   // Video Storage/Files
-    static let upload = "📤"    // Upload/Download
-    static let firebase = "🔥"  // Firebase/Firestore
-    static let user = "👤"      // User/Auth
-    static let app = "📱"       // App/UI
-    static let camera = "🎬"    // Camera
-    
-    // MARK: - Action Emojis
-    static let start = "▶️"     // Start/Begin
-    static let stop = "⏹️"      // Stop/End
-    static let save = "💾"      // Save/Write
-    static let read = "🔍"      // Read/Query
-    static let update = "🔄"    // Update/Change
-    static let delete = "🗑️"    // Delete
-    static let event = "⚡️"     // Event/Trigger
-    
-    // MARK: - Alert Emojis (optional)
-    static let error = "❌"     // Error
-    static let warning = "⚠️"   // Warning
-    static let critical = "🚨"  // Critical
-    static let success = "✨"   // Important Success
+    static let ai_training = AIContext.training
+    static let ai_inference = AIContext.inference
+    static let ai_pipeline = AIContext.pipeline
 }
 
 // Example usage:
-// Log.enable(Log.video, Log.firebase)  // Only show video and firebase logs
-// Log.disable(Log.storage)             // Hide storage logs
-// Log.enableAll()                      // Show all logs
-// Log.toggleSourceInfo(true)           // Show file:line in logs
+// Log.p(Log.ai_training, Log.start, "Starting model training")
+// Log.p(Log.ai_inference, Log.event, Log.warning, "Low confidence: \(score)")

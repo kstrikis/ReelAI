@@ -1,11 +1,17 @@
 # ReelAI Logging Rules
 
 ## 1. Core Logging System
-We use a simple, reliable three-emoji logging system through the `Log` enum:
+We use a simple, reliable three-emoji logging system through protocol-based extensible contexts:
 
 ```swift
 Log.p(CONTEXT, ACTION, ALERT?, MESSAGE)
 ```
+
+Where:
+- `CONTEXT`: Which part of the app (first emoji) - must conform to `Log.Context`
+- `ACTION`: What's happening (second emoji) - must conform to `Log.Action`
+- `ALERT`: Optional status/importance (third emoji) - must conform to `Log.Alert`
+- `MESSAGE`: The actual log message
 
 Example:
 ```swift
@@ -13,17 +19,50 @@ Log.p(Log.video, Log.start, Log.warning, "Buffer low for video: \(videoId)")
 // Output: [10:45:30][main][VideoPlayer.swift:121] 🎥 ▶️ ⚠️ Buffer low for video: abc123
 ```
 
-## 2. Logging Components
+## 2. Extending the Logging System
 
-### Context Emoji (First Position)
-Identifies the system component:
-- 🎥 `Log.video` - Video Player
-- 📼 `Log.storage` - Video Storage/Files
-- 📤 `Log.upload` - Upload/Download
-- 🔥 `Log.firebase` - Firebase/Firestore
-- 👤 `Log.user` - User/Auth
-- 📱 `Log.app` - App/UI
-- 🎬 `Log.camera` - Camera
+### Adding New Contexts
+```swift
+extension Log {
+    enum YourContext: Log.Context {
+        case featureA, featureB
+        
+        var emoji: String {
+            switch self {
+            case .featureA: return "💫"
+            case .featureB: return "🌟"
+            }
+        }
+        
+        var name: String { String(describing: self) }
+    }
+    
+    // Add convenience properties
+    static let your_featureA = YourContext.featureA
+    static let your_featureB = YourContext.featureB
+}
+```
+
+### Built-in Contexts
+- 🎥 Video Player (`Log.video`)
+- 📼 Storage (`Log.storage`)
+- 📤 Upload (`Log.upload`)
+- 🔥 Firebase (`Log.firebase`)
+- 👤 User (`Log.user`)
+- 📱 App (`Log.app`)
+- 🎬 Camera (`Log.camera`)
+- 📱 Social Feed (`Log.social_feed`)
+- 💬 Comments (`Log.social_comments`)
+- ❤️ Likes (`Log.social_likes`)
+- ↗️ Shares (`Log.social_shares`)
+- 📈 Trending (`Log.social_trending`)
+- ✍️ Story Prompt (`Log.story_prompt`)
+- 📖 Story Generation (`Log.story_generation`)
+- ✂️ Story Editing (`Log.story_editing`)
+- 🎤 Voiceover (`Log.audio_voiceover`)
+- 🎵 Music (`Log.audio_music`)
+- 🔊 Effects (`Log.audio_effects`)
+- 🎚️ Mixing (`Log.audio_mixing`)
 
 ### Action Emoji (Second Position)
 Describes the operation:
@@ -146,9 +185,9 @@ class VideoPlayer {
 ## 7. Code Review Requirements
 
 Reviewers must verify:
-1. Correct emoji pattern usage
-2. No sensitive data exposure
-3. Appropriate context selection
+1. Correct context protocol implementation
+2. Appropriate emoji selection for new contexts
+3. No sensitive data exposure
 4. Meaningful message content
 5. Performance considerations
 6. Build configuration compliance
@@ -160,6 +199,7 @@ Reviewers must verify:
 - Verify logs don't appear in release builds
 - Test filtering functionality
 - Validate privacy compliance
+- Test new context implementations
 
 ### Example Test
 ```swift
@@ -171,4 +211,8 @@ func testLogging() {
 }
 ```
 
-Remember: The logging system should never fail or cause issues. It's designed to be bulletproof and help debug issues, not create them.
+Remember: The logging system is extensible by design. When adding a new feature:
+1. Create a new context enum conforming to `Log.Context`
+2. Choose unique, descriptive emojis
+3. Add convenience properties
+4. Use consistently throughout the feature
