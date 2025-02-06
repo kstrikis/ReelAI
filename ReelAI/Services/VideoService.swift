@@ -19,9 +19,8 @@ final class VideoService {
     private let uploadService = VideoUploadService.shared
 
     private init() {
-        AppLogger.methodEntry(AppLogger.ui)
-        print("📼 VideoService singleton initialized")
-        AppLogger.methodExit(AppLogger.ui)
+        Log.p(Log.video, Log.start, "Initializing VideoService")
+        Log.p(Log.video, Log.exit, "VideoService initialization complete")
     }
 
     func createVideo(
@@ -30,13 +29,12 @@ final class VideoService {
         title: String,
         description: String?
     ) -> AnyPublisher<(Video, String), Error> {
-        AppLogger.methodEntry(AppLogger.ui)
-        print("📼 Creating video metadata for user: \(username)")
+        Log.p(Log.video, Log.start, "Creating video metadata for user: \(username)")
 
         return Future { promise in
             Task {
                 do {
-                    print("📼 Creating Firestore document...")
+                    Log.p(Log.firebase, Log.save, "Creating Firestore document for video")
                     let docRef = self.db.collection("videos").document()
                     let videoId = docRef.documentID
                     
@@ -54,40 +52,39 @@ final class VideoService {
                     )
                     
                     try await docRef.setData(from: video)
-                    print("📼 Video document created with ID: \(videoId)")
-                    AppLogger.debug("Created video document with ID: \(videoId)")
+                    Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId)")
                     
                     // Return both the video object and the ID for use in upload
                     promise(.success((video, videoId)))
                 } catch {
-                    print("❌ Failed to create video document: \(error.localizedDescription)")
-                    AppLogger.error(AppLogger.ui, error)
+                    Log.p(Log.firebase, Log.save, Log.error, "Failed to create video document: \(error.localizedDescription)")
                     promise(.failure(error))
                 }
             }
         }
         .handleEvents(
             receiveSubscription: { _ in
-                print("📼 Video creation publisher subscribed")
+                Log.p(Log.video, Log.event, "Video creation publisher subscribed")
             },
             receiveCompletion: { completion in
                 switch completion {
                 case .finished:
-                    print("📼 Video creation completed successfully")
+                    Log.p(Log.video, Log.event, Log.success, "Video creation completed successfully")
                 case let .failure(error):
-                    print("❌ Video creation failed: \(error.localizedDescription)")
+                    Log.p(Log.video, Log.event, Log.error, "Video creation failed: \(error.localizedDescription)")
                 }
-                AppLogger.methodExit(AppLogger.ui)
+                Log.p(Log.video, Log.exit, "Video creation process complete")
             },
             receiveCancel: {
-                print("📼 Video creation cancelled")
-                AppLogger.debug("Video creation cancelled")
+                Log.p(Log.video, Log.event, Log.warning, "Video creation cancelled")
             }
         )
         .eraseToAnyPublisher()
     }
 
     func updateVideoMediaUrl(videoId: String, mediaUrl: String) -> AnyPublisher<Void, Error> {
+        Log.p(Log.video, Log.update, "Updating video media URL for video: \(videoId)")
+        
         return Future { promise in
             Task {
                 do {
@@ -95,8 +92,10 @@ final class VideoService {
                         "mediaUrl": mediaUrl,
                         "updatedAt": FieldValue.serverTimestamp()
                     ])
+                    Log.p(Log.video, Log.update, Log.success, "Successfully updated media URL")
                     promise(.success(()))
                 } catch {
+                    Log.p(Log.video, Log.update, Log.error, "Failed to update media URL: \(error.localizedDescription)")
                     promise(.failure(error))
                 }
             }
@@ -110,14 +109,14 @@ final class VideoService {
         title: String,
         description: String?
     ) -> AnyPublisher<VideoPublishState, Never> {
-        print("📼 Starting video publish process")
+        Log.p(Log.video, Log.start, "Starting video publish process")
         
         return Future<VideoPublishState, Never> { promise in
             Task {
                 do {
                     // 1. Create Firestore document first
                     promise(.success(.creatingDocument))
-                    print("📼 Creating Firestore document...")
+                    Log.p(Log.firebase, Log.save, "Creating Firestore document for video")
                     
                     let docRef = self.db.collection("videos").document()
                     let videoId = docRef.documentID
@@ -135,10 +134,10 @@ final class VideoService {
                     )
                     
                     try await docRef.setData(from: video)
-                    print("📼 Video document created with ID: \(videoId)")
+                    Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId)")
                     
                     // 2. Upload the video file
-                    print("📼 Starting video file upload...")
+                    Log.p(Log.video, Log.uploadAction, "Starting video file upload")
                     let uploadPublisher = self.uploadService.uploadVideo(
                         at: url,
                         userId: userId,
@@ -149,12 +148,13 @@ final class VideoService {
                     for await state in uploadPublisher.values {
                         switch state {
                         case let .progress(progress):
+                            Log.p(Log.video, Log.uploadAction, "Upload progress for video \(videoId): \(Int(progress * 100))%")
                             promise(.success(.uploading(progress: progress)))
                             
                         case let .completed(ref):
                             // 3. Update document with storage URL
                             promise(.success(.updatingDocument))
-                            print("📼 Updating document with storage URL...")
+                            Log.p(Log.firebase, Log.update, "Updating document with storage URL: \(ref.fullPath)")
                             
                             try await docRef.updateData([
                                 "mediaUrl": ref.fullPath,
@@ -163,26 +163,29 @@ final class VideoService {
                             
                             // 4. Get final video object
                             let finalDoc = try await docRef.getDocument(as: Video.self)
+                            Log.p(Log.video, Log.event, Log.success, "Video \(videoId) published successfully")
                             promise(.success(.completed(finalDoc)))
                             
                         case let .failure(error):
+                            Log.p(Log.video, Log.event, Log.error, "Video publish failed: \(error.localizedDescription)")
                             promise(.success(.error(error)))
                         }
                     }
                 } catch {
+                    Log.p(Log.video, Log.event, Log.error, "Video publish process error: \(error.localizedDescription)")
                     promise(.success(.error(error)))
                 }
             }
         }
         .handleEvents(
             receiveSubscription: { _ in
-                print("📼 Video publish process started")
+                Log.p(Log.video, Log.event, "Video publish process started")
             },
             receiveCompletion: { _ in
-                print("📼 Video publish process completed")
+                Log.p(Log.video, Log.exit, "Video publish process complete")
             },
             receiveCancel: {
-                print("📼 Video publish process cancelled")
+                Log.p(Log.video, Log.event, Log.warning, "Video publish process cancelled")
             }
         )
         .eraseToAnyPublisher()

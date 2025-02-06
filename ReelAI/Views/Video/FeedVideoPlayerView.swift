@@ -13,16 +13,20 @@ class VideoPlayerObserver: ObservableObject {
     init(player: AVPlayer, video: Video) {
         self.player = player
         self.video = video
+        Log.p(Log.video, Log.start, "Initializing player observer for video: \(video.id)")
         setupObservers()
     }
     
     private func setupObservers() {
+        Log.p(Log.video, Log.start, "Setting up video player observers")
+        
         // Monitor buffering state
         player.currentItem?.publisher(for: \.isPlaybackLikelyToKeepUp)
             .sink { isLikelyToKeepUp in
                 if isLikelyToKeepUp {
-                    Log.p(Log.video, Log.event, nil, "Buffer sufficient for video: \(self.video.id)")
+                    Log.p(Log.video, Log.event, "Buffer sufficient for video: \(self.video.id)")
                 } else {
+                    // Keep warning here as it might affect user experience
                     Log.p(Log.video, Log.event, Log.warning, "Buffer depleted for video: \(self.video.id)")
                 }
             }
@@ -36,10 +40,11 @@ class VideoPlayerObserver: ObservableObject {
                     Log.p(Log.video, Log.event, Log.success, "Video ready to play: \(self.video.id)")
                 case .failed:
                     if let error = self.player.currentItem?.error {
+                        // Keep error here as it's a playback failure
                         Log.p(Log.video, Log.event, Log.error, "Playback failed: \(error.localizedDescription)")
                     }
                 default:
-                    Log.p(Log.video, Log.event, nil, "Playback status changed: \(status.rawValue)")
+                    Log.p(Log.video, Log.event, "Playback status changed: \(status.rawValue)")
                 }
             }
             .store(in: &cancellables)
@@ -53,7 +58,7 @@ class VideoPlayerObserver: ObservableObject {
             if duration > 0 {
                 // Log only significant progress points
                 if currentTime.truncatingRemainder(dividingBy: 5) < 0.5 { // Log every 5 seconds
-                    Log.p(Log.video, Log.event, nil, "Playback at \(Int(currentTime))s/\(Int(duration))s")
+                    Log.p(Log.video, Log.event, "Playback at \(Int(currentTime))s/\(Int(duration))s")
                 }
             }
         }
@@ -62,6 +67,7 @@ class VideoPlayerObserver: ObservableObject {
         NotificationCenter.default.publisher(for: .AVPlayerItemPlaybackStalled, object: player.currentItem)
             .sink { [weak self] _ in
                 guard let self = self else { return }
+                // Keep warning here as it affects user experience
                 Log.p(Log.video, Log.event, Log.warning, "Playback stalled: \(self.video.id)")
             }
             .store(in: &cancellables)
@@ -70,16 +76,19 @@ class VideoPlayerObserver: ObservableObject {
         NotificationCenter.default.publisher(for: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
             .sink { [weak self] _ in
                 guard let self = self else { return }
-                Log.p(Log.video, Log.event, nil, "Video completed, looping: \(self.video.id)")
+                Log.p(Log.video, Log.event, "Video completed, looping: \(self.video.id)")
                 self.player.seek(to: .zero)
                 self.player.play()
             }
             .store(in: &cancellables)
+            
+        Log.p(Log.video, Log.exit, "Video player observers setup complete")
     }
     
     deinit {
         if let timeObserver = timeObserver {
             player.removeTimeObserver(timeObserver)
+            Log.p(Log.video, Log.event, "Removed time observer for video: \(video.id)")
         }
     }
 }
@@ -116,6 +125,7 @@ struct FeedVideoPlayerView: View {
             // Create a dummy player that won't be used
             let dummyPlayer = AVPlayer()
             _observer = StateObject(wrappedValue: VideoPlayerObserver(player: dummyPlayer, video: video))
+            Log.p(Log.video, Log.event, Log.warning, "Created dummy player for video: \(video.id)")
         }
         
         Log.p(Log.video, Log.event, "Initializing player view for video: \(video.id)")
@@ -129,19 +139,20 @@ struct FeedVideoPlayerView: View {
                 VideoPlayer(player: player)
                     .frame(width: size.width, height: size.height)
                     .onAppear {
-                        Log.p(Log.video, Log.start, nil, "Starting playback for video: \(video.id)")
+                        Log.p(Log.video, Log.start, "Starting playback for video: \(video.id)")
                         player.play()
                         isPlaying = true
                         checkUserReaction()
                     }
                     .onDisappear {
-                        Log.p(Log.video, Log.stop, nil, "Stopping playback for video: \(video.id)")
+                        Log.p(Log.video, Log.stop, "Stopping playback for video: \(video.id)")
                         player.pause()
                         isPlaying = false
                     }
                     .onTapGesture {
                         withAnimation {
                             showControls.toggle()
+                            Log.p(Log.video, Log.event, "User toggled video controls: \(showControls ? "shown" : "hidden")")
                         }
                     }
             } else {
@@ -194,8 +205,10 @@ struct FeedVideoPlayerView: View {
                     Button(action: {
                         isPlaying.toggle()
                         if isPlaying {
+                            Log.p(Log.video, Log.start, "User resumed playback: \(video.id)")
                             player?.play()
                         } else {
+                            Log.p(Log.video, Log.stop, "User paused playback: \(video.id)")
                             player?.pause()
                         }
                     }) {
@@ -248,6 +261,7 @@ struct FeedVideoPlayerView: View {
             if showControls {
                 withAnimation {
                     showControls = false
+                    Log.p(Log.video, Log.event, "Auto-hiding video controls")
                 }
             }
         }
@@ -255,11 +269,12 @@ struct FeedVideoPlayerView: View {
     
     private func checkUserReaction() {
         guard let userId = Auth.auth().currentUser?.uid else {
+            // Keep warning as it indicates auth state issue
             Log.p(Log.firebase, Log.read, Log.warning, "No user ID available for reaction check")
             return
         }
         
-        Log.p(Log.firebase, Log.read, nil, "Checking user reaction for video: \(video.id)")
+        Log.p(Log.firebase, Log.read, "Checking user reaction for video: \(video.id)")
         
         db.collection("videos")
             .document(video.id)
@@ -267,23 +282,25 @@ struct FeedVideoPlayerView: View {
             .document(userId)
             .getDocument { snapshot, error in
                 if let error = error {
+                    // Keep error as it's a database operation failure
                     Log.p(Log.firebase, Log.read, Log.error, "Failed to check reaction: \(error.localizedDescription)")
                     return
                 }
                 
                 if let data = snapshot?.data(),
                    let isLike = data["isLike"] as? Bool {
-                    Log.p(Log.firebase, Log.read, Log.success, "Found user reaction: \(isLike ? "like" : "dislike")")
+                    Log.p(Log.firebase, Log.read, "Found user reaction: \(isLike ? "like" : "dislike")")
                     hasLiked = isLike
                     hasDisliked = !isLike
                 } else {
-                    Log.p(Log.firebase, Log.read, nil, "No existing reaction found")
+                    Log.p(Log.firebase, Log.read, "No existing reaction found")
                 }
             }
     }
     
     private func handleLike() {
         guard let userId = Auth.auth().currentUser?.uid else {
+            // Keep warning as it indicates auth state issue
             Log.p(Log.firebase, Log.event, Log.warning, "No user ID available for like action")
             return
         }
@@ -306,15 +323,18 @@ struct FeedVideoPlayerView: View {
     }
     
     private func handleDislike() {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
+        guard let userId = Auth.auth().currentUser?.uid else {
+            Log.p(Log.firebase, Log.event, Log.warning, "No user ID available for dislike action")
+            return
+        }
         
         if hasDisliked {
-            // Remove dislike
+            Log.p(Log.firebase, Log.update, "Removing dislike from video: \(video.id)")
             removeReaction(userId: userId)
             localDislikeCount -= 1
             hasDisliked = false
         } else {
-            // Add dislike
+            Log.p(Log.firebase, Log.update, "Adding dislike to video: \(video.id)")
             if hasLiked {
                 localLikeCount -= 1
             }
@@ -326,7 +346,7 @@ struct FeedVideoPlayerView: View {
     }
     
     private func addReaction(userId: String, isLike: Bool) {
-        AppLogger.dbWrite("Adding \(isLike ? "like" : "dislike") reaction", collection: "reactions")
+        Log.p(Log.firebase, Log.save, "Adding \(isLike ? "like" : "dislike") reaction")
         
         let reactionData: [String: Any] = [
             "userId": userId,
@@ -340,10 +360,11 @@ struct FeedVideoPlayerView: View {
             .document(userId)
             .setData(reactionData) { error in
                 if let error = error {
-                    AppLogger.dbError("Error adding reaction", error: error, collection: "reactions")
+                    // Keep error as it's a database operation failure
+                    Log.p(Log.firebase, Log.save, Log.error, "Error adding reaction: \(error.localizedDescription)")
                     return
                 }
-                AppLogger.dbSuccess("Successfully added reaction", collection: "reactions")
+                Log.p(Log.firebase, Log.save, Log.success, "Successfully added reaction")
                 
                 // Update video engagement counts
                 let engagementUpdate = [
@@ -355,14 +376,17 @@ struct FeedVideoPlayerView: View {
                     .document(video.id)
                     .updateData(engagementUpdate) { error in
                         if let error = error {
-                            AppLogger.dbError("Error updating engagement counts", error: error, collection: "videos")
+                            // Keep error as it's a database operation failure
+                            Log.p(Log.firebase, Log.update, Log.error, "Error updating engagement counts: \(error.localizedDescription)")
+                        } else {
+                            Log.p(Log.firebase, Log.update, Log.success, "Successfully updated engagement counts")
                         }
                     }
             }
     }
     
     private func removeReaction(userId: String) {
-        AppLogger.dbDelete("Removing reaction", collection: "reactions")
+        Log.p(Log.firebase, Log.delete, "Removing reaction")
         
         db.collection("videos")
             .document(video.id)
@@ -370,10 +394,11 @@ struct FeedVideoPlayerView: View {
             .document(userId)
             .delete { error in
                 if let error = error {
-                    AppLogger.dbError("Error removing reaction", error: error, collection: "reactions")
+                    // Keep error as it's a database operation failure
+                    Log.p(Log.firebase, Log.delete, Log.error, "Error removing reaction: \(error.localizedDescription)")
                     return
                 }
-                AppLogger.dbSuccess("Successfully removed reaction", collection: "reactions")
+                Log.p(Log.firebase, Log.delete, Log.success, "Successfully removed reaction")
                 
                 // Update video engagement counts
                 let engagementUpdate = [
@@ -384,7 +409,10 @@ struct FeedVideoPlayerView: View {
                     .document(video.id)
                     .updateData(engagementUpdate) { error in
                         if let error = error {
-                            AppLogger.dbError("Error updating engagement counts", error: error, collection: "videos")
+                            // Keep error as it's a database operation failure
+                            Log.p(Log.firebase, Log.update, Log.error, "Error updating engagement counts: \(error.localizedDescription)")
+                        } else {
+                            Log.p(Log.firebase, Log.update, Log.success, "Successfully updated engagement counts")
                         }
                     }
             }

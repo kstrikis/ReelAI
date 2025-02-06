@@ -14,6 +14,7 @@ struct SideMenuView: View {
                     .ignoresSafeArea()
                     .onTapGesture {
                         withAnimation {
+                            Log.p(Log.app, Log.event, "User tapped to dismiss side menu")
                             isPresented = false
                         }
                     }
@@ -52,6 +53,7 @@ struct SideMenuView: View {
                                 title: "Profile",
                                 systemImage: "person.circle",
                                 action: {
+                                    Log.p(Log.app, Log.event, "User selected Profile menu item")
                                     showProfile = true
                                 }
                             )
@@ -60,6 +62,7 @@ struct SideMenuView: View {
                                 title: "About",
                                 systemImage: "info.circle",
                                 action: {
+                                    Log.p(Log.app, Log.event, "User selected About menu item")
                                     // TODO: Show about view
                                 }
                             )
@@ -68,6 +71,7 @@ struct SideMenuView: View {
                                 title: "Settings",
                                 systemImage: "gear",
                                 action: {
+                                    Log.p(Log.app, Log.event, "User selected Settings menu item")
                                     // TODO: Show settings
                                 }
                             )
@@ -82,6 +86,7 @@ struct SideMenuView: View {
                                     title: "Debug Tools",
                                     systemImage: "hammer.fill",
                                     action: {
+                                        Log.p(Log.app, Log.event, "User selected Debug Tools menu item")
                                         showDebugMenu = true
                                     }
                                 )
@@ -96,6 +101,7 @@ struct SideMenuView: View {
                                 title: "Sign Out",
                                 systemImage: "rectangle.portrait.and.arrow.right",
                                 action: {
+                                    Log.p(Log.auth, Log.start, "User initiated sign out")
                                     authService.signOut()
                                 }
                             )
@@ -118,6 +124,12 @@ struct SideMenuView: View {
             }
         }
         #endif
+        .onAppear {
+            Log.p(Log.app, Log.start, "Side menu appeared")
+        }
+        .onDisappear {
+            Log.p(Log.app, Log.exit, "Side menu disappeared")
+        }
     }
 }
 

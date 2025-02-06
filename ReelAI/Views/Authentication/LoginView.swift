@@ -106,10 +106,10 @@ struct LoginView: View {
             .padding()
         }
         .onAppear {
-            AppLogger.methodEntry(AppLogger.ui)
+            Log.p(Log.auth, Log.start, "Login view appeared")
         }
         .onDisappear {
-            AppLogger.methodExit(AppLogger.ui)
+            Log.p(Log.auth, Log.exit, "Login view disappeared")
         }
     }
 
@@ -122,7 +122,7 @@ struct LoginView: View {
     // MARK: - Actions
 
     private func signIn() {
-        AppLogger.methodEntry(AppLogger.ui)
+        Log.p(Log.auth, Log.start, "Starting email sign in")
         isLoading = true
         errorMessage = nil
 
@@ -132,17 +132,18 @@ struct LoginView: View {
                     isLoading = false
                     if case let .failure(error) = completion {
                         errorMessage = error.localizedDescription
+                        Log.p(Log.auth, Log.event, Log.error, "Sign in failed: \(error.localizedDescription)")
                     }
                 },
                 receiveValue: { _ in
-                    // Success is handled by AuthenticationService's state
+                    Log.p(Log.auth, Log.event, Log.success, "Sign in successful")
                 }
             )
             .store(in: subscriptions)
     }
 
     private func signInAsDemo() {
-        AppLogger.methodEntry(AppLogger.ui)
+        Log.p(Log.auth, Log.start, "Starting demo sign in")
         isLoading = true
         errorMessage = nil
 
@@ -152,21 +153,22 @@ struct LoginView: View {
                     isLoading = false
                     if case let .failure(error) = completion {
                         errorMessage = error.localizedDescription
+                        Log.p(Log.auth, Log.event, Log.error, "Demo sign in failed: \(error.localizedDescription)")
                     }
                 },
                 receiveValue: { _ in
-                    // Success is handled by AuthenticationService's state
+                    Log.p(Log.auth, Log.event, Log.success, "Demo sign in successful")
                 }
             )
             .store(in: subscriptions)
     }
 
     private func signUp() {
-        AppLogger.methodEntry(AppLogger.ui)
+        Log.p(Log.auth, Log.start, "Attempting to access sign up")
         // TODO: Navigate to sign up view
         // For now, just show an alert that this is coming soon
         errorMessage = "Sign up coming soon!"
-        AppLogger.methodExit(AppLogger.ui)
+        Log.p(Log.auth, Log.event, Log.warning, "Sign up feature not yet implemented")
     }
 }
 

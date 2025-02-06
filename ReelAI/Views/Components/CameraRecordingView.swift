@@ -7,29 +7,29 @@ import SwiftUI
 extension Publisher {
     func async() async throws -> Output {
         try await withCheckedThrowingContinuation { continuation in
-            print("🔄 Converting publisher to async...")
+            Log.p(Log.app, Log.start, "Converting publisher to async")
             var cancellable: AnyCancellable?
 
             cancellable = self.sink(
                 receiveCompletion: { completion in
-                    print("🔄 Publisher completed")
+                    Log.p(Log.app, Log.event, "Publisher completed")
                     switch completion {
                     case .finished:
                         break
                     case let .failure(error):
-                        print("🔄 Publisher failed: \(error)")
+                        Log.p(Log.app, Log.event, Log.error, "Publisher failed: \(error)")
                         continuation.resume(throwing: error)
                     }
                     cancellable?.cancel()
                 },
                 receiveValue: { value in
-                    print("🔄 Publisher received value")
+                    Log.p(Log.app, Log.event, "Publisher received value")
                     continuation.resume(returning: value)
                     cancellable?.cancel()
                 }
             )
 
-            print("🔄 Publisher subscription created")
+            Log.p(Log.app, Log.event, "Publisher subscription created")
         }
     }
 }
@@ -66,60 +66,59 @@ final class CameraViewModel {
     private var recordingURL: URL?
 
     init(authService: AuthenticationService) {
-        AppLogger.methodEntry(AppLogger.ui)
+        Log.p(Log.camera, Log.start, "Initializing CameraViewModel")
         self.authService = authService
-        AppLogger.methodExit(AppLogger.ui)
+        Log.p(Log.camera, Log.exit, "CameraViewModel initialized")
     }
 
     func handleCameraPreviews() async {
-        AppLogger.methodEntry(AppLogger.ui)
+        Log.p(Log.camera, Log.start, "Starting camera preview stream")
         await cameraManager.prepareAndStart()
         for await image in cameraManager.previewStream {
             Task { @MainActor in
                 currentFrame = image
             }
         }
-        AppLogger.methodExit(AppLogger.ui)
+        Log.p(Log.camera, Log.exit, "Camera preview stream ended")
     }
 
     func stopCamera() {
-        print("📸 🛑 Stopping camera session")
+        Log.p(Log.camera, Log.stop, "Stopping camera session")
         cameraManager.stopSession()
-        print("📸 ✅ Camera session stopped")
+        Log.p(Log.camera, Log.event, Log.success, "Camera session stopped")
     }
 
     func toggleRecording() async {
-        print("📸 🎬 Toggle recording called, current state: \(isRecording)")
+        Log.p(Log.camera, Log.event, "Toggle recording called, current state: \(isRecording)")
 
         do {
             if isRecording {
-                print("📸 ⏹️ Stopping recording...")
+                Log.p(Log.camera, Log.stop, "Stopping recording")
                 // Stop recording
                 let tempURL = try await cameraManager.stopRecording()
                 isRecording = false
-                print("📸 💾 Recording stopped, file at: \(tempURL.path)")
+                Log.p(Log.camera, Log.event, "Recording stopped, file at: \(tempURL.path)")
 
                 // Save to local storage
-                print("📸 📝 Saving to local storage...")
+                Log.p(Log.storage, Log.save, "Saving to local storage")
                 let persistentURL = try await localVideoService.saveVideo(from: tempURL).async()
-                print("📸 ✅ Video saved to: \(persistentURL.path)")
+                Log.p(Log.storage, Log.save, Log.success, "Video saved to: \(persistentURL.path)")
 
                 // Clean up temp file
                 try? FileManager.default.removeItem(at: tempURL)
-                print("📸 🧹 Cleaned up temporary file")
+                Log.p(Log.storage, Log.delete, "Cleaned up temporary file")
 
             } else {
-                print("📸 ▶️ Starting recording...")
+                Log.p(Log.camera, Log.start, "Starting recording")
                 // Start recording
                 recordingURL = try await cameraManager.startRecording()
                 isRecording = true
-                print("📸 📹 Recording started, will save to: \(recordingURL?.path ?? "nil")")
+                Log.p(Log.camera, Log.event, Log.success, "Recording started, will save to: \(recordingURL?.path ?? "nil")")
             }
             errorMessage = nil
         } catch {
-            print("❌ 💥 Recording error: \(error.localizedDescription)")
+            Log.p(Log.camera, Log.event, Log.error, "Recording error: \(error.localizedDescription)")
             errorMessage = error.localizedDescription
-            AppLogger.error(AppLogger.ui, error)
         }
     }
 }
@@ -149,6 +148,7 @@ struct CameraRecordingView: View {
                     // Top controls
                     HStack {
                         Button(action: {
+                            Log.p(Log.camera, Log.event, "User tapped to open gallery")
                             showingGallery = true
                         }, label: {
                             Image(systemName: "photo.on.rectangle")
@@ -160,6 +160,7 @@ struct CameraRecordingView: View {
                         Spacer()
 
                         Button(action: {
+                            Log.p(Log.camera, Log.event, "User tapped to switch camera")
                             Task {
                                 await CameraManager.shared.switchCamera()
                             }
@@ -189,6 +190,7 @@ struct CameraRecordingView: View {
 
                             // Record button
                             Button(action: {
+                                Log.p(Log.camera, Log.event, "User tapped record button")
                                 Task {
                                     await viewModel?.toggleRecording()
                                 }
@@ -214,6 +216,7 @@ struct CameraRecordingView: View {
         .sheet(isPresented: $showingGallery, onDismiss: {
             // Restart camera when returning from gallery
             if isActive {
+                Log.p(Log.camera, Log.start, "Restarting camera after gallery dismissal")
                 Task {
                     await viewModel?.handleCameraPreviews()
                 }
@@ -224,6 +227,7 @@ struct CameraRecordingView: View {
                     .toolbar {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Button("Done") {
+                                Log.p(Log.camera, Log.event, "User dismissed gallery")
                                 showingGallery = false
                             }
                         }
@@ -231,11 +235,13 @@ struct CameraRecordingView: View {
             }
             .onAppear {
                 // Stop camera when showing gallery
+                Log.p(Log.camera, Log.stop, "Stopping camera for gallery view")
                 viewModel?.stopCamera()
             }
         }
         .onChange(of: isActive) { _, isNowActive in
             if isNowActive {
+                Log.p(Log.camera, Log.start, "Camera view became active")
                 // Initialize viewModel with authService
                 viewModel = CameraViewModel(authService: authService)
                 // Start camera when swiping to this view
@@ -243,6 +249,7 @@ struct CameraRecordingView: View {
                     await viewModel?.handleCameraPreviews()
                 }
             } else {
+                Log.p(Log.camera, Log.stop, "Camera view became inactive")
                 // Stop camera when swiping away
                 viewModel?.stopCamera()
             }

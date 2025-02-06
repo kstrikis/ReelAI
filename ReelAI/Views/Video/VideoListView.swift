@@ -2,7 +2,7 @@ import SwiftUI
 import FirebaseFirestoreCombineSwift
 import FirebaseFirestore
 import Combine
-import ReelAI  // Import the module containing our models
+import ReelAI
 
 struct VideoListView: View {
     @StateObject private var viewModel = VideoListViewModel()
@@ -19,6 +19,7 @@ struct VideoListView: View {
                     Text("No videos available")
                         .foregroundColor(.white)
                     Button("Retry") {
+                        Log.p(Log.video, Log.event, "User tapped retry in empty video list")
                         viewModel.loadVideos()
                     }
                     .foregroundColor(.blue)
@@ -35,7 +36,11 @@ struct VideoListView: View {
             }
         }
         .onAppear {
+            Log.p(Log.video, Log.start, "Video list view appeared")
             viewModel.loadVideos()
+        }
+        .onDisappear {
+            Log.p(Log.video, Log.exit, "Video list view disappeared")
         }
     }
 }
@@ -74,6 +79,9 @@ struct VideoListItemView: View {
         .padding()
         .background(Color.gray.opacity(0.2))
         .cornerRadius(12)
+        .onAppear {
+            Log.p(Log.video, Log.event, "Video list item appeared: \(video.id)")
+        }
     }
 }
 
@@ -84,12 +92,12 @@ class VideoListViewModel: ObservableObject {
     private let db = Firestore.firestore()
     
     func loadVideos() {
-        AppLogger.dbQuery("Loading videos from Firestore", collection: "videos")
+        Log.p(Log.firebase, Log.read, "Loading videos from Firestore")
         
         // Set loading state on main thread
         DispatchQueue.main.async {
             self.isLoading = true
-            AppLogger.debug("Set isLoading to true")
+            Log.p(Log.video, Log.event, "Set isLoading to true")
         }
         
         db.collection("videos")
@@ -97,7 +105,7 @@ class VideoListViewModel: ObservableObject {
             .limit(to: 50)
             .snapshotPublisher()
             .map { (querySnapshot: QuerySnapshot) -> [Video] in
-                AppLogger.dbSuccess("Received \(querySnapshot.documents.count) videos", collection: "videos")
+                Log.p(Log.firebase, Log.read, Log.success, "Received \(querySnapshot.documents.count) videos")
                 return querySnapshot.documents.compactMap { document in
                     do {
                         let video = try document.data(as: Video.self)
@@ -113,7 +121,7 @@ class VideoListViewModel: ObservableObject {
                             engagement: video.engagement
                         )
                     } catch {
-                        AppLogger.dbError("Error decoding video document", error: error, collection: "videos")
+                        Log.p(Log.firebase, Log.read, Log.error, "Error decoding video document: \(error.localizedDescription)")
                         return nil
                     }
                 }
@@ -124,10 +132,10 @@ class VideoListViewModel: ObservableObject {
                 
                 // Always reset loading state
                 self.isLoading = false
-                AppLogger.debug("Set isLoading to false")
+                Log.p(Log.video, Log.event, "Set isLoading to false")
                 
                 if case .failure(let error) = completion {
-                    AppLogger.dbError("Error loading videos", error: error, collection: "videos")
+                    Log.p(Log.firebase, Log.read, Log.error, "Error loading videos: \(error.localizedDescription)")
                 }
             }, receiveValue: { [weak self] videos in
                 guard let self = self else { return }
@@ -135,8 +143,8 @@ class VideoListViewModel: ObservableObject {
                 self.videos = videos
                 // Ensure loading is false after setting videos
                 self.isLoading = false
-                AppLogger.debug("Set isLoading to false after receiving \(videos.count) videos")
-                AppLogger.dbSuccess("Successfully loaded \(videos.count) videos", collection: "videos")
+                Log.p(Log.video, Log.event, "Set isLoading to false after receiving \(videos.count) videos")
+                Log.p(Log.firebase, Log.read, Log.success, "Successfully loaded \(videos.count) videos")
             })
             .store(in: &cancellables)
     }

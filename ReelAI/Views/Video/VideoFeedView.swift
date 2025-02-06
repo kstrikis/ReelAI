@@ -19,6 +19,7 @@ struct VideoFeedView: View {
                         Text("No videos available")
                             .foregroundColor(.white)
                         Button("Retry") {
+                            Log.p(Log.video, Log.event, "User tapped retry in empty feed")
                             viewModel.loadInitialVideos()
                         }
                         .foregroundColor(.blue)
@@ -40,13 +41,19 @@ struct VideoFeedView: View {
                     .rotationEffect(.degrees(-90))
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .onChange(of: viewModel.currentIndex) { newIndex in
-                        AppLogger.debug("Video feed index changed to \(newIndex)")
+                        Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
                         viewModel.handleIndexChange(newIndex)
                     }
                 }
             }
         }
         .ignoresSafeArea()
+        .onAppear {
+            Log.p(Log.video, Log.start, "Video feed view appeared")
+        }
+        .onDisappear {
+            Log.p(Log.video, Log.exit, "Video feed view disappeared")
+        }
     }
 }
 
@@ -64,12 +71,12 @@ class VideoFeedViewModel: ObservableObject {
     private let batchSize = 10
     
     init() {
-        AppLogger.debug("Initializing VideoFeedViewModel")
+        Log.p(Log.video, Log.start, "Initializing video feed")
         loadInitialVideos()
     }
     
     func handleIndexChange(_ newIndex: Int) {
-        AppLogger.debug("Handling index change to \(newIndex)")
+        Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
         // If we're getting close to the end, load more videos
         if newIndex >= videos.count - 3 {
             loadMoreVideos()
@@ -84,7 +91,7 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     func loadInitialVideos() {
-        AppLogger.dbQuery("Loading initial batch of videos", collection: "videos")
+        Log.p(Log.firebase, Log.read, "Loading initial batch of videos")
         isLoading = true
         
         db.collection("videos")
@@ -92,7 +99,7 @@ class VideoFeedViewModel: ObservableObject {
             .limit(to: batchSize)
             .snapshotPublisher()
             .map { querySnapshot -> [Video] in
-                AppLogger.dbSuccess("Received \(querySnapshot.documents.count) videos", collection: "videos")
+                Log.p(Log.firebase, Log.read, "Received \(querySnapshot.documents.count) videos")
                 self.lastDocumentSnapshot = querySnapshot.documents.last
                 return querySnapshot.documents.compactMap { document in
                     do {
@@ -109,22 +116,23 @@ class VideoFeedViewModel: ObservableObject {
                             engagement: video.engagement
                         )
                     } catch {
-                        AppLogger.dbError("Error decoding video document", error: error, collection: "videos")
+                        Log.p(Log.firebase, Log.read, Log.error, "Failed to decode video: \(error.localizedDescription)")
                         return nil
                     }
                 }
             }
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] completion in
-                self?.isLoading = false
+            .sink { completion in
+                self.isLoading = false
                 if case .failure(let error) = completion {
-                    AppLogger.dbError("Error loading videos", error: error, collection: "videos")
+                    Log.p(Log.firebase, Log.read, Log.error, "Failed to load videos: \(error.localizedDescription)")
                 }
             } receiveValue: { [weak self] videos in
                 guard let self = self else { return }
                 self.videos = videos
                 self.isLoading = false
-                AppLogger.dbSuccess("Successfully loaded \(videos.count) videos", collection: "videos")
+                
+                Log.p(Log.video, Log.event, "Loaded initial \(videos.count) videos")
                 
                 // Preload first few videos
                 if !videos.isEmpty {
@@ -136,11 +144,11 @@ class VideoFeedViewModel: ObservableObject {
     
     private func loadMoreVideos() {
         guard let lastSnapshot = lastDocumentSnapshot else {
-            AppLogger.debug("No more videos to load (no last snapshot)")
+            Log.p(Log.video, Log.event, "No more videos to load")
             return
         }
         
-        AppLogger.dbQuery("Loading more videos", collection: "videos")
+        Log.p(Log.firebase, Log.read, "Loading next batch of videos")
         
         db.collection("videos")
             .order(by: "createdAt", descending: true)
@@ -148,7 +156,7 @@ class VideoFeedViewModel: ObservableObject {
             .start(afterDocument: lastSnapshot)
             .snapshotPublisher()
             .map { querySnapshot -> [Video] in
-                AppLogger.dbSuccess("Received \(querySnapshot.documents.count) additional videos", collection: "videos")
+                Log.p(Log.firebase, Log.read, "Received \(querySnapshot.documents.count) additional videos")
                 self.lastDocumentSnapshot = querySnapshot.documents.last
                 return querySnapshot.documents.compactMap { document in
                     do {
@@ -165,7 +173,7 @@ class VideoFeedViewModel: ObservableObject {
                             engagement: video.engagement
                         )
                     } catch {
-                        AppLogger.dbError("Error decoding video document", error: error, collection: "videos")
+                        Log.p(Log.firebase, Log.read, Log.error, "Failed to decode video: \(error.localizedDescription)")
                         return nil
                     }
                 }
@@ -173,12 +181,12 @@ class VideoFeedViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { completion in
                 if case .failure(let error) = completion {
-                    AppLogger.dbError("Error loading more videos", error: error, collection: "videos")
+                    Log.p(Log.firebase, Log.read, Log.error, "Failed to load more videos: \(error.localizedDescription)")
                 }
             } receiveValue: { [weak self] newVideos in
                 guard let self = self else { return }
                 self.videos.append(contentsOf: newVideos)
-                AppLogger.dbSuccess("Successfully loaded \(newVideos.count) additional videos", collection: "videos")
+                Log.p(Log.video, Log.event, "Added \(newVideos.count) more videos to feed")
                 
                 // Preload videos around current index
                 self.preloadVideosAround(index: self.currentIndex)
@@ -187,7 +195,7 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     private func preloadVideosAround(index: Int) {
-        AppLogger.debug("Preloading videos around index \(index)")
+        Log.p(Log.video, Log.event, "Preloading videos around index \(index)")
         let start = max(0, index - preloadWindow)
         let end = min(videos.count - 1, index + preloadWindow)
         
@@ -205,9 +213,9 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     private func preloadVideo(_ video: Video) {
-        AppLogger.debug("Preloading video: \(video.id)")
+        Log.p(Log.video, Log.event, "Preloading video: \(video.id)")
         guard let videoURL = URL(string: video.mediaUrl) else {
-            AppLogger.debug("Invalid video URL for video: \(video.id)")
+            Log.p(Log.video, Log.event, Log.error, "Invalid video URL: \(video.mediaUrl)")
             return
         }
         
@@ -224,10 +232,10 @@ class VideoFeedViewModel: ObservableObject {
                 
                 await MainActor.run {
                     preloadedPlayers[video.id] = player
-                    AppLogger.debug("Successfully preloaded video: \(video.id)")
+                    Log.p(Log.video, Log.event, Log.success, "Successfully preloaded video: \(video.id)")
                 }
             } catch {
-                AppLogger.debug("Failed to preload video \(video.id): \(error.localizedDescription)")
+                Log.p(Log.video, Log.event, Log.error, "Failed to preload video: \(error.localizedDescription)")
             }
         }
     }

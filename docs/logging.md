@@ -2,9 +2,16 @@
 
 ## Core Logging Pattern
 
-We use a simple, reliable three-emoji logging system through protocol-based extensible contexts:
+We use a simple, reliable logging system through protocol-based extensible contexts. The logger is overloaded to support two main patterns:
+
+1. Standard logging (no alert):
 ```swift
-Log.p(CONTEXT, ACTION, ALERT?, MESSAGE)
+Log.p(CONTEXT, ACTION, MESSAGE)
+```
+
+2. Alert logging (for significant events only):
+```swift
+Log.p(CONTEXT, ACTION, ALERT, MESSAGE)
 ```
 
 Where:
@@ -13,10 +20,20 @@ Where:
 - `ALERT`: Optional status/importance (third emoji) - must conform to `Log.Alert`
 - `MESSAGE`: The actual log message
 
-Example:
+The alert emoji (third parameter) should be used sparingly and only for truly significant events that require attention:
+- Errors that need fixing (e.g., API failures, database errors)
+- Warnings about user-impacting issues (e.g., network problems, playback stalls)
+- Critical state changes that affect core functionality
+
+Example of appropriate alert usage:
 ```swift
-Log.p(Log.video, Log.start, Log.warning, "Buffer low for video: \(videoId)")
-// Output: [10:45:30][main][VideoPlayer.swift:121] 🎥 ▶️ ⚠️ Buffer low for video: abc123
+// DO use alerts for significant issues
+Log.p(Log.video, Log.event, Log.error, "Playback failed: Connection timeout")
+Log.p(Log.firebase, Log.read, Log.warning, "No user ID available for auth check")
+
+// DON'T use alerts for routine operations
+Log.p(Log.video, Log.event, "Buffer sufficient for playback")  // No alert needed
+Log.p(Log.firebase, Log.read, "Found user reaction")          // No alert needed
 ```
 
 ## Adding Logging to a New Feature

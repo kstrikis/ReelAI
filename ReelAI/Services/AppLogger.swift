@@ -46,7 +46,7 @@ enum Log {
     
     // MARK: - Built-in Actions
     enum CoreAction: Action {
-        case start, stop, save, read, update, delete, event
+        case start, stop, save, read, update, delete, event, exit, uploadAction
         
         var emoji: String {
             switch self {
@@ -57,6 +57,8 @@ enum Log {
             case .update: return "🔄"
             case .delete: return "🗑️"
             case .event: return "⚡️"
+            case .exit: return "🔚"
+            case .uploadAction: return "📤"
             }
         }
         
@@ -100,18 +102,107 @@ enum Log {
         showSourceInfo = enabled
     }
     
-    // MARK: - Logging Function
+    // MARK: - Logging Functions
     
+    /// Log a message with context, action, alert, and message
+    /// - Parameters:
+    ///   - context: The area of the app generating the log
+    ///   - action: The type of action being performed
+    ///   - alert: The severity or status of the log
+    ///   - message: The log message
     static func p(
         _ context: Context,
         _ action: Action,
-        _ alert: Alert? = nil,
+        _ alert: Alert,
+        _ message: String,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        #if DEBUG
+        internalLog(context: context, action: action, alert: alert, message: message, file: file, function: function, line: line)
+        #endif
+    }
+    
+    /// Log a message with just context, action, and message
+    /// - Parameters:
+    ///   - context: The area of the app generating the log
+    ///   - action: The type of action being performed
+    ///   - message: The log message
+    static func p(
+        _ context: Context,
+        _ action: Action,
+        _ message: String,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        #if DEBUG
+        internalLog(context: context, action: action, alert: nil, message: message, file: file, function: function, line: line)
+        #endif
+    }
+    
+    /// Log an error with context and message
+    /// - Parameters:
+    ///   - context: The area of the app generating the log
+    ///   - error: The error to log
+    ///   - message: Optional additional context message
+    static func error(
+        _ context: Context,
+        _ error: Error,
         _ message: String? = nil,
         file: String = #file,
         function: String = #function,
         line: Int = #line
     ) {
         #if DEBUG
+        let errorMessage = message.map { "\($0): \(error.localizedDescription)" } ?? error.localizedDescription
+        internalLog(context: context, action: CoreAction.event, alert: CoreAlert.error, message: errorMessage, file: file, function: function, line: line)
+        #endif
+    }
+    
+    /// Log a success message with context
+    /// - Parameters:
+    ///   - context: The area of the app generating the log
+    ///   - message: The success message
+    static func success(
+        _ context: Context,
+        _ message: String,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        #if DEBUG
+        internalLog(context: context, action: CoreAction.event, alert: CoreAlert.success, message: message, file: file, function: function, line: line)
+        #endif
+    }
+    
+    /// Log a warning message with context
+    /// - Parameters:
+    ///   - context: The area of the app generating the log
+    ///   - message: The warning message
+    static func warning(
+        _ context: Context,
+        _ message: String,
+        file: String = #file,
+        function: String = #function,
+        line: Int = #line
+    ) {
+        #if DEBUG
+        internalLog(context: context, action: CoreAction.event, alert: CoreAlert.warning, message: message, file: file, function: function, line: line)
+        #endif
+    }
+    
+    // Internal logging implementation
+    private static func internalLog(
+        context: Context,
+        action: Action,
+        alert: Alert?,
+        message: String,
+        file: String,
+        function: String,
+        line: Int
+    ) {
         // Check if this context is enabled (if filters are active)
         if !enabledContexts.isEmpty && !enabledContexts.contains(context.emoji) {
             return
@@ -138,12 +229,8 @@ enum Log {
             log += " \(alert.emoji)"
         }
         
-        // Add message with fallback
-        if let message = message, !message.isEmpty {
-            log += " \(message)"
-        } else {
-            log += " <no message>"
-        }
+        // Add message
+        log += " \(message)"
         
         // Both print and os_log for reliability, wrapped in do-catch
         do {
@@ -152,9 +239,8 @@ enum Log {
             logger.debug("\(log, privacy: .public)")
         } catch {
             // If all else fails, use print with a simple format
-            print("🚨 Logger failed, raw message: \(message ?? "<no message>")")
+            print("🚨 Logger failed, raw message: \(message)")
         }
-        #endif
     }
     
     // MARK: - Convenience Properties
@@ -176,6 +262,8 @@ enum Log {
     static let update = CoreAction.update
     static let delete = CoreAction.delete
     static let event = CoreAction.event
+    static let exit = CoreAction.exit
+    static let uploadAction = CoreAction.uploadAction
     
     // Core alerts
     static let error = CoreAlert.error
@@ -187,6 +275,27 @@ enum Log {
 // MARK: - Feature-Specific Contexts
 
 extension Log {
+    // Authentication Features
+    enum AuthContext: Log.Context {
+        case auth, session, token, provider
+        
+        var emoji: String {
+            switch self {
+            case .auth: return "🔐"
+            case .session: return "🔑"
+            case .token: return "🎟️"
+            case .provider: return "🔒"
+            }
+        }
+        
+        var name: String { String(describing: self) }
+    }
+    
+    static let auth = AuthContext.auth
+    static let auth_session = AuthContext.session
+    static let auth_token = AuthContext.token
+    static let auth_provider = AuthContext.provider
+    
     // Social Features
     enum SocialContext: Log.Context {
         case feed, comments, likes, shares, trending
@@ -251,48 +360,6 @@ extension Log {
     static let audio_mixing = AudioContext.mixing
 }
 
-extension AppLogger {
-    // Emoji categories for print statements
-    static let uiEmoji = "🖼️"
-    static let cameraEmoji = "📸"
-    static let videoEmoji = "📼"
-    static let uploadEmoji = "📤"
-    
-    // Firestore categories
-    static let dbEmoji = "🔥" // Firestore operations
-    static let authEmoji = "🔑" // Authentication
-    static let profileEmoji = "👤" // User profile operations
-    
-    static func dbEntry(_ message: String, collection: String? = nil) {
-        print("🔥 📝 \(collection ?? ""): \(message)")
-    }
-    
-    static func dbSuccess(_ message: String, collection: String? = nil) {
-        print("🔥 ✅ \(collection ?? ""): \(message)")
-    }
-    
-    static func dbError(_ message: String, error: Error, collection: String? = nil) {
-        print("🔥 ❌ \(collection ?? ""): \(message)")
-        print("🔥 💥 Error details: \(error.localizedDescription)")
-    }
-    
-    static func dbQuery(_ message: String, collection: String) {
-        print("🔥 🔍 \(collection): \(message)")
-    }
-    
-    static func dbWrite(_ message: String, collection: String) {
-        print("🔥 💾 \(collection): \(message)")
-    }
-    
-    static func dbUpdate(_ message: String, collection: String) {
-        print("🔥 ⚡️ \(collection): \(message)")
-    }
-    
-    static func dbDelete(_ message: String, collection: String) {
-        print("🔥 🗑️ \(collection): \(message)")
-    }
-}
-
 // Example of how to extend with new contexts:
 extension Log {
     enum AIContext: Log.Context {
@@ -314,6 +381,22 @@ extension Log {
     static let ai_pipeline = AIContext.pipeline
 }
 
-// Example usage:
-// Log.p(Log.ai_training, Log.start, "Starting model training")
-// Log.p(Log.ai_inference, Log.event, Log.warning, "Low confidence: \(score)")
+// MARK: - Example Usage
+/*
+ Basic logging:
+ Log.p(Log.firebase, Log.start, "Starting service")
+ Log.p(Log.firebase, Log.event, Log.error, "Service failed")
+ 
+ Convenience methods:
+ Log.error(Log.firebase, error, "Failed to initialize")
+ Log.warning(Log.firebase, "Low memory condition")
+ Log.success(Log.firebase, "Service started successfully")
+ 
+ Context filtering:
+ Log.enable(Log.firebase, Log.video)
+ Log.disable(Log.storage)
+ Log.enableAll()
+ 
+ Source info:
+ Log.toggleSourceInfo(true)  // Shows [File.swift:123]
+ */

@@ -86,11 +86,20 @@ struct AIToolsView: View {
                             destinationView(for: tool)
                         } label: {
                             AIToolCard(tool: tool)
+                                .onTapGesture {
+                                    Log.p(Log.app, Log.event, "User selected AI tool: \(tool.rawValue)")
+                                }
                         }
                     }
                 }
                 .padding()
             }
+        }
+        .onAppear {
+            Log.p(Log.app, Log.start, "AI Tools view appeared")
+        }
+        .onDisappear {
+            Log.p(Log.app, Log.exit, "AI Tools view disappeared")
         }
     }
     
@@ -101,6 +110,9 @@ struct AIToolsView: View {
             PublishingView()
         default:
             ComingSoonView(feature: tool.rawValue)
+                .onAppear {
+                    Log.p(Log.app, Log.event, "Showing coming soon view for: \(tool.rawValue)")
+                }
         }
     }
 }
@@ -154,6 +166,12 @@ struct ComingSoonView: View {
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
             }
+        }
+        .onAppear {
+            Log.p(Log.app, Log.start, "Coming soon view appeared for: \(feature)")
+        }
+        .onDisappear {
+            Log.p(Log.app, Log.exit, "Coming soon view disappeared for: \(feature)")
         }
     }
 }

@@ -10,97 +10,97 @@ final class FirestoreService {
     private let db: Firestore
     
     private init() {
-        AppLogger.dbEntry("Initializing FirestoreService")
+        Log.p(Log.firebase, Log.start, "Initializing FirestoreService")
         
         // Initialize Firestore
         db = Firestore.firestore()
         
         // Log configuration details
-        print("🔥 Firestore Configuration:")
-        print("  - Project ID: \(db.app.options.projectID)")
-        print("  - Storage Bucket: \(db.app.options.storageBucket)")
+        Log.p(Log.firebase, Log.event, "Firestore Configuration:")
+        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID)")
+        Log.p(Log.firebase, Log.event, "Storage Bucket: \(db.app.options.storageBucket)")
         
         // Enable network and verify connection
         db.enableNetwork { error in
             if let error = error {
-                print("❌ Failed to enable network: \(error)")
+                Log.p(Log.firebase, Log.event, Log.error, "Failed to enable network: \(error)")
             } else {
-                print("✅ Network enabled")
+                Log.p(Log.firebase, Log.event, Log.success, "Network enabled")
             }
         }
         
-        AppLogger.dbEntry("Firestore service initialized")
+        Log.p(Log.firebase, Log.start, Log.success, "Firestore service initialized")
     }
     
     // MARK: - User Profile Operations
     
     func createUserProfile(_ profile: UserProfile, userId: String) -> AnyPublisher<Void, Error> {
-        AppLogger.dbWrite("Creating new user profile for \(userId)", collection: "users")
+        Log.p(Log.firebase, Log.save, "Creating new user profile for \(userId)")
         
         return Future<Void, Error> { promise in
             do {
                 let data = try profile.asDictionary()
                 self.db.collection("users").document(userId).setData(data) { error in
                     if let error = error {
-                        AppLogger.dbError("Failed to create user profile", error: error, collection: "users")
+                        Log.p(Log.firebase, Log.save, Log.error, "Failed to create user profile: \(error.localizedDescription)")
                         promise(.failure(error))
                     } else {
-                        AppLogger.dbSuccess("Created user profile for \(userId)", collection: "users")
+                        Log.p(Log.firebase, Log.save, Log.success, "Created user profile for \(userId)")
                         promise(.success(()))
                     }
                 }
             } catch {
-                AppLogger.dbError("Failed to encode user profile", error: error, collection: "users")
+                Log.p(Log.firebase, Log.save, Log.error, "Failed to encode user profile: \(error.localizedDescription)")
                 promise(.failure(error))
             }
         }.eraseToAnyPublisher()
     }
     
     func updateUserProfile(_ profile: UserProfile, userId: String) -> AnyPublisher<Void, Error> {
-        AppLogger.dbUpdate("Updating user profile for \(userId)", collection: "users")
+        Log.p(Log.firebase, Log.update, "Updating user profile for \(userId)")
         
         return Future<Void, Error> { promise in
             do {
                 let data = try profile.asDictionary()
                 self.db.collection("users").document(userId).setData(data, merge: true) { error in
                     if let error = error {
-                        AppLogger.dbError("Failed to update user profile", error: error, collection: "users")
+                        Log.p(Log.firebase, Log.update, Log.error, "Failed to update user profile: \(error.localizedDescription)")
                         promise(.failure(error))
                     } else {
-                        AppLogger.dbSuccess("Updated user profile for \(userId)", collection: "users")
+                        Log.p(Log.firebase, Log.update, Log.success, "Updated user profile for \(userId)")
                         promise(.success(()))
                     }
                 }
             } catch {
-                AppLogger.dbError("Failed to encode user profile update", error: error, collection: "users")
+                Log.p(Log.firebase, Log.update, Log.error, "Failed to encode user profile update: \(error.localizedDescription)")
                 promise(.failure(error))
             }
         }.eraseToAnyPublisher()
     }
     
     func getUserProfile(userId: String) -> AnyPublisher<UserProfile?, Error> {
-        AppLogger.dbQuery("Fetching user profile for \(userId)", collection: "users")
+        Log.p(Log.firebase, Log.read, "Fetching user profile for \(userId)")
         
         return Future<UserProfile?, Error> { promise in
             self.db.collection("users").document(userId).getDocument { snapshot, error in
                 if let error = error {
-                    AppLogger.dbError("Failed to fetch user profile", error: error, collection: "users")
+                    Log.p(Log.firebase, Log.read, Log.error, "Failed to fetch user profile: \(error.localizedDescription)")
                     promise(.failure(error))
                     return
                 }
                 
                 guard let data = snapshot?.data() else {
-                    AppLogger.dbEntry("No profile found for \(userId)", collection: "users")
+                    Log.p(Log.firebase, Log.read, Log.warning, "No profile found for \(userId)")
                     promise(.success(nil))
                     return
                 }
                 
                 do {
                     let profile = try UserProfile(dictionary: data)
-                    AppLogger.dbSuccess("Fetched user profile for \(userId)", collection: "users")
+                    Log.p(Log.firebase, Log.read, Log.success, "Fetched user profile for \(userId)")
                     promise(.success(profile))
                 } catch {
-                    AppLogger.dbError("Failed to decode user profile", error: error, collection: "users")
+                    Log.p(Log.firebase, Log.read, Log.error, "Failed to decode user profile: \(error.localizedDescription)")
                     promise(.failure(error))
                 }
             }
@@ -110,11 +110,11 @@ final class FirestoreService {
     // MARK: - Video Operations
     
     func createVideo(title: String, description: String?, mediaUrl: String, userId: String, username: String) -> AnyPublisher<String, Error> {
-        AppLogger.dbWrite("Creating new video document", collection: "videos")
-        AppLogger.dbEntry("Video metadata:", collection: "videos")
-        AppLogger.dbEntry("  - Title: \(title)", collection: "videos")
-        AppLogger.dbEntry("  - User ID: \(userId)", collection: "videos")
-        AppLogger.dbEntry("  - Media URL: \(mediaUrl)", collection: "videos")
+        Log.p(Log.firebase, Log.save, "Creating new video document")
+        Log.p(Log.firebase, Log.event, "Video metadata:")
+        Log.p(Log.firebase, Log.event, "Title: \(title)")
+        Log.p(Log.firebase, Log.event, "User ID: \(userId)")
+        Log.p(Log.firebase, Log.event, "Media URL: \(mediaUrl)")
         
         let video = Video(
             id: UUID().uuidString,  // Will be replaced by Firestore document ID
@@ -135,18 +135,18 @@ final class FirestoreService {
                 let error = NSError(domain: "com.edgineer.ReelAI",
                                   code: -1,
                                   userInfo: [NSLocalizedDescriptionKey: "Authentication mismatch or missing"])
-                AppLogger.dbError("Failed to create video - auth mismatch", error: error, collection: "videos")
+                Log.p(Log.firebase, Log.save, Log.error, "Failed to create video - auth mismatch")
                 promise(.failure(error))
                 return
             }
             
-            AppLogger.dbEntry("Creating document in 'videos' collection...", collection: "videos")
+            Log.p(Log.firebase, Log.save, "Creating document in 'videos' collection...")
             self.db.collection("videos").addDocument(data: video.asFirestoreData) { error in
                 if let error = error {
-                    AppLogger.dbError("Failed to create video document", error: error, collection: "videos")
+                    Log.p(Log.firebase, Log.save, Log.error, "Failed to create video document: \(error.localizedDescription)")
                     promise(.failure(error))
                 } else {
-                    AppLogger.dbSuccess("Created video document successfully", collection: "videos")
+                    Log.p(Log.firebase, Log.save, Log.success, "Created video document successfully")
                     promise(.success("Video document created successfully"))
                 }
             }
@@ -154,7 +154,7 @@ final class FirestoreService {
     }
     
     func getVideos(userId: String? = nil, limit: Int = 20) -> AnyPublisher<[Video], Error> {
-        AppLogger.dbQuery("Fetching videos" + (userId != nil ? " for user \(userId!)" : ""), collection: "videos")
+        Log.p(Log.firebase, Log.read, "Fetching videos" + (userId != nil ? " for user \(userId!)" : ""))
         
         var query = db.collection("videos")
             .order(by: "createdAt", descending: true)
@@ -167,19 +167,19 @@ final class FirestoreService {
         return Future<[Video], Error> { promise in
             query.getDocuments { snapshot, error in
                 if let error = error {
-                    AppLogger.dbError("Failed to fetch videos", error: error, collection: "videos")
+                    Log.p(Log.firebase, Log.read, Log.error, "Failed to fetch videos: \(error.localizedDescription)")
                     promise(.failure(error))
                     return
                 }
                 
                 guard let documents = snapshot?.documents else {
-                    AppLogger.dbEntry("No videos found", collection: "videos")
+                    Log.p(Log.firebase, Log.read, Log.warning, "No videos found")
                     promise(.success([]))
                     return
                 }
                 
                 let videos = documents.compactMap { Video(document: $0) }
-                AppLogger.dbSuccess("Fetched \(videos.count) videos", collection: "videos")
+                Log.p(Log.firebase, Log.read, Log.success, "Fetched \(videos.count) videos")
                 promise(.success(videos))
             }
         }.eraseToAnyPublisher()

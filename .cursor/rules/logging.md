@@ -1,23 +1,59 @@
 # ReelAI Logging Rules
 
 ## 1. Core Logging System
-We use a simple, reliable three-emoji logging system through protocol-based extensible contexts:
+We use a simple, reliable logging system through protocol-based extensible contexts. The logger supports two patterns:
 
+1. Standard logging (no alert) - Use this for most logging needs:
 ```swift
-Log.p(CONTEXT, ACTION, ALERT?, MESSAGE)
+Log.p(CONTEXT, ACTION, MESSAGE)
+```
+
+2. Alert logging - Use this ONLY for significant events:
+```swift
+Log.p(CONTEXT, ACTION, ALERT, MESSAGE)
 ```
 
 Where:
 - `CONTEXT`: Which part of the app (first emoji) - must conform to `Log.Context`
 - `ACTION`: What's happening (second emoji) - must conform to `Log.Action`
-- `ALERT`: Optional status/importance (third emoji) - must conform to `Log.Alert`
+- `ALERT`: Status/importance (third emoji) - must conform to `Log.Alert`, use ONLY for significant events
 - `MESSAGE`: The actual log message
 
 Example:
 ```swift
-Log.p(Log.video, Log.start, Log.warning, "Buffer low for video: \(videoId)")
-// Output: [10:45:30][main][VideoPlayer.swift:121] 🎥 ▶️ ⚠️ Buffer low for video: abc123
+// Standard logging - use for routine operations
+Log.p(Log.video, Log.start, "Starting playback")
+Log.p(Log.firebase, Log.read, "Fetching user profile")
+
+// Alert logging - use ONLY for significant events
+Log.p(Log.video, Log.event, Log.error, "Playback failed: Network error")
+Log.p(Log.firebase, Log.read, Log.warning, "Auth token expired")
 ```
+
+### Alert Usage Guidelines
+The third emoji (alert) should ONLY be used for:
+1. Errors requiring immediate attention
+   - Database operation failures
+   - Network errors
+   - Authentication failures
+   - API errors
+   
+2. Warnings about user-impacting issues
+   - Performance degradation
+   - Resource limitations
+   - Authentication state issues
+   
+3. Critical state changes
+   - Service unavailability
+   - Core functionality failures
+   - Security-related events
+
+DO NOT use alerts for:
+- Successful operations
+- Normal state changes
+- Regular progress updates
+- Expected transitions
+- Routine events
 
 ## 2. Extending the Logging System
 

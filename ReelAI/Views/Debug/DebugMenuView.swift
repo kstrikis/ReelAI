@@ -1,6 +1,6 @@
+#if DEBUG
 import SwiftUI
 
-#if DEBUG
 struct DebugMenuView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showVideoList = false
@@ -9,6 +9,7 @@ struct DebugMenuView: View {
         List {
             Section("Video Tools") {
                 Button(action: {
+                    Log.p(Log.app, Log.event, "Debug: Opening video list")
                     showVideoList = true
                 }) {
                     Label("Video List", systemImage: "play.rectangle.on.rectangle")
@@ -20,15 +21,23 @@ struct DebugMenuView: View {
                 HStack {
                     Text("Build Version")
                     Spacer()
-                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown")
+                    let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "Unknown"
+                    Text(version)
                         .foregroundColor(.gray)
+                        .onAppear {
+                            Log.p(Log.app, Log.event, "Debug: Build version: \(version)")
+                        }
                 }
                 
                 HStack {
                     Text("Build Number")
                     Spacer()
-                    Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown")
+                    let buildNumber = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "Unknown"
+                    Text(buildNumber)
                         .foregroundColor(.gray)
+                        .onAppear {
+                            Log.p(Log.app, Log.event, "Debug: Build number: \(buildNumber)")
+                        }
                 }
             }
         }
@@ -40,6 +49,12 @@ struct DebugMenuView: View {
                     .navigationTitle("Debug: Video List")
                     .navigationBarTitleDisplayMode(.inline)
             }
+        }
+        .onAppear {
+            Log.p(Log.app, Log.start, "Debug menu appeared")
+        }
+        .onDisappear {
+            Log.p(Log.app, Log.exit, "Debug menu disappeared")
         }
     }
 }

@@ -18,7 +18,7 @@ class AppDelegate: NSObject, UIApplicationDelegate {
         _: UIApplication,
         didFinishLaunchingWithOptions _: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.app, Log.start, "Application launching")
         FirebaseApp.configure()
 
         // Block until we get both Photos permissions
@@ -26,17 +26,17 @@ class AppDelegate: NSObject, UIApplicationDelegate {
 
         // First request addOnly permission
         PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
-            print("📱 Photos add permission result: \(status.rawValue)")
+            Log.p(Log.app, Log.event, "Photos add permission result: \(status.rawValue)")
 
             // Then request readWrite permission
             PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
-                print("📱 Photos readWrite permission result: \(status.rawValue)")
+                Log.p(Log.app, Log.event, "Photos readWrite permission result: \(status.rawValue)")
                 semaphore.signal()
             }
         }
         semaphore.wait()
 
-        AppLogger.methodExit(AppLogger.auth)
+        Log.p(Log.app, Log.exit, "Application launch complete")
         return true
     }
 }
@@ -63,7 +63,10 @@ struct ReelAIApp: App {
                 }
             }
             .onAppear {
-                AppLogger.methodEntry(AppLogger.ui, "ReelAIApp.body")
+                Log.p(Log.app, Log.start, "ReelAI app root view appeared")
+            }
+            .onDisappear {
+                Log.p(Log.app, Log.exit, "ReelAI app root view disappeared")
             }
         }
     }
