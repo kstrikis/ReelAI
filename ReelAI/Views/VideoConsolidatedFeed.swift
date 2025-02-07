@@ -25,8 +25,8 @@ class UnifiedVideoHandler: ObservableObject {
     private var preloadTasks: [String: Task<Void, Error>] = [:]
     private var playerSubjects: [String: CurrentValueSubject<AVPlayer?, Never>] = [:]
     var cancellables: Set<AnyCancellable> = []  // For managing Combine subscriptions
-    private var initialBatchSize = 5 // How many to get first
-    private var paginationBatchSize = 3 // How many more to add on
+    private var initialBatchSize = 8 // Increased from 5 to 8
+    private var paginationBatchSize = 5 // Increased from 3 to 5
 
     // Track video positions
     private var videoPositions: [String: CMTime] = [:]
@@ -122,8 +122,8 @@ class UnifiedVideoHandler: ObservableObject {
     private func preloadInitialVideos() {
         guard !videos.isEmpty else { return }
 
-        // Preload the first two videos.
-        let initialVideos = Array(videos.prefix(2))
+        // Preload the first four videos instead of just two
+        let initialVideos = Array(videos.prefix(4))
         for video in initialVideos {
             preloadVideo(video)
         }
@@ -227,10 +227,17 @@ class UnifiedVideoHandler: ObservableObject {
                 }
 
                 // Calculate which videos need preloading (excluding current and already loaded)
-                let adjacentIndices = Set([
-                    max(0, newIndex - 1),
-                    min(videos.count - 1, newIndex + 1)
-                ])
+                var adjacentIndices = Set<Int>()
+                // Add indices before current
+                for offset in 1...3 {
+                    adjacentIndices.insert(max(0, newIndex - offset))
+                }
+                // Add current index
+                adjacentIndices.insert(newIndex)
+                // Add indices after current
+                for offset in 1...3 {
+                    adjacentIndices.insert(min(videos.count - 1, newIndex + offset))
+                }
                 
                 let preloadIndices = adjacentIndices.filter { index in
                     let video = videos[index]
@@ -263,12 +270,18 @@ class UnifiedVideoHandler: ObservableObject {
         // ALWAYS keep the current video's player
         var keepIds = Set([videos[index].id])
         
-        // Add adjacent videos we want to keep
-        let keepIndices = Set([
-            max(0, index - 1),
-            index,
-            min(videos.count - 1, index + 1)
-        ])
+        // Add adjacent videos we want to keep (increased window further)
+        var keepIndices = Set<Int>()
+        // Add indices before current
+        for offset in 1...3 {
+            keepIndices.insert(max(0, index - offset))
+        }
+        // Add current index
+        keepIndices.insert(index)
+        // Add indices after current
+        for offset in 1...3 {
+            keepIndices.insert(min(videos.count - 1, index + offset))
+        }
         
         keepIds.formUnion(keepIndices.compactMap { videos.indices.contains($0) ? videos[$0].id : nil })
         Log.p(Log.video, Log.event, "Keeping video IDs: \(keepIds)")
