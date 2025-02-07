@@ -4,422 +4,158 @@ import FirebaseFirestore
 import FirebaseAuth
 import Combine
 
+// Move extensions to file scope
+extension AVPlayer.TimeControlStatus {
+    var statusDescription: String {
+        switch self {
+        case .paused: return "paused"
+        case .waitingToPlayAtSpecifiedRate: return "waiting"
+        case .playing: return "playing"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
+extension AVPlayerItem.Status {
+    var statusDescription: String {
+        switch self {
+        case .unknown: return "unknown"
+        case .readyToPlay: return "readyToPlay"
+        case .failed: return "failed"
+        @unknown default: return "unknown"
+        }
+    }
+}
+
 @MainActor
 class FeedVideoPlayerViewModel: ObservableObject {
-    @Published private(set) var state = VideoState.loading
     @Published var showingControls = true
-    @Published private(set) var hasUserReaction = false
-    @Published private(set) var isPlayerReady = false
-    
     private let video: Video
     private(set) var player: AVPlayer?
-    private var cancellables = Set<AnyCancellable>()
-    private var setupTask: Task<Void, Never>?
-    private var controlsTimer: Timer?
-    private var statusObservation: AnyCancellable?
-    private var bufferingObservation: AnyCancellable?
-    private var timeObservation: Any?
-    private var waitForPlayerTask: Task<Void, Never>?
-    
-    enum VideoState: Equatable {
-        case loading
-        case preparing
-        case buffering
-        case playing
-        case paused
-        case failed(String)
-        
-        var isPlayable: Bool {
-            switch self {
-            case .playing, .paused, .buffering:
-                return true
-            case .loading, .preparing, .failed:
-                return false
-            }
-        }
-    }
+    private var timeObserver: Any?
     
     init(video: Video, player: AVPlayer?) {
-        Log.p(Log.video, Log.start, "Initializing player view model for video: \(video.id)")
         self.video = video
-        
-        if let player = player {
-            Log.p(Log.video, Log.event, "Received pre-initialized player for video: \(video.id)")
-            setupExistingPlayer(player)
-        } else {
-            Log.p(Log.video, Log.event, "No player available yet for video: \(video.id)")
-            state = .loading
-            // Start waiting for player
-            waitForPlayer()
-        }
-    }
-    
-    private func waitForPlayer() {
-        // Cancel any existing wait task
-        waitForPlayerTask?.cancel()
-        
-        waitForPlayerTask = Task { @MainActor in
-            // Wait up to 10 seconds for the player to become available
-            for _ in 0..<20 {
-                if Task.isCancelled { return }
-                
-                // Check if player is now available
-                if let player = VideoFeedViewModel.shared?.getPlayer(for: video) {
-                    Log.p(Log.video, Log.event, "Player became available for video: \(video.id)")
-                    setupExistingPlayer(player)
-                    return
-                }
-                
-                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
-            }
-            
-            // If we get here, player didn't become available in time
-            if state == .loading {
-                Log.p(Log.video, Log.event, Log.error, "Timed out waiting for player: \(video.id)")
-                state = .failed("Video player unavailable")
-            }
-        }
-    }
-    
-    private func setupExistingPlayer(_ player: AVPlayer) {
-        Log.p(Log.video, Log.event, "Setting up existing player for video: \(video.id)")
-        state = .preparing
-        
-        // Cancel any existing setup
-        setupTask?.cancel()
-        statusObservation?.cancel()
-        bufferingObservation?.cancel()
-        
         self.player = player
         
-        setupTask = Task { @MainActor in
-            guard let playerItem = player.currentItem else {
-                Log.p(Log.video, Log.event, Log.error, "No player item available")
-                state = .failed("No player item available")
-                return
-            }
+        if let player = player {
+            setupObservations(for: player)
+        }
+    }
+    
+    func updatePlayer(_ newPlayer: AVPlayer?) {
+        Log.p(Log.video, Log.event, "🔄 Updating player for \(video.id)")
+        self.player = newPlayer
+        if let newPlayer = newPlayer {
+            setupObservations(for: newPlayer)
+        }
+    }
+    
+    private func setupObservations(for player: AVPlayer) {
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        timeObserver = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
+            guard let player = player,
+                  let duration = player.currentItem?.duration.seconds,
+                  duration.isFinite else { return }
             
-            // Configure player
-            player.automaticallyWaitsToMinimizeStalling = true
+            let position = time.seconds
+            let remaining = duration - position
             
-            do {
-                // Set up status observation first
-                statusObservation = playerItem.publisher(for: \.status)
-                    .receive(on: DispatchQueue.main)
-                    .sink { [weak self] status in
-                        guard let self = self else { return }
-                        switch status {
-                        case .readyToPlay:
-                            Log.p(Log.video, Log.event, Log.success, "Player ready to play")
-                            if self.state == .preparing {
-                                self.isPlayerReady = true
-                                self.state = .playing
-                                player.play()
-                            }
-                        case .failed:
-                            let error = playerItem.error?.localizedDescription ?? "Unknown error"
-                            Log.p(Log.video, Log.event, Log.error, "Player failed: \(error)")
-                            self.state = .failed(error)
-                        default:
-                            break
-                        }
-                    }
-                
-                // Only set up buffering observation after status is ready
-                bufferingObservation = playerItem.publisher(for: \.isPlaybackLikelyToKeepUp)
-                    .receive(on: DispatchQueue.main)
-                    .sink { [weak self] isPlaybackLikelyToKeepUp in
-                        guard let self = self else { return }
-                        if !isPlaybackLikelyToKeepUp && self.state.isPlayable {
-                            Log.p(Log.video, Log.event, "Player entered buffering state")
-                            self.state = .buffering
-                            // Don't pause during buffering, let AVPlayer handle it
-                        } else if isPlaybackLikelyToKeepUp && self.state == .buffering {
-                            Log.p(Log.video, Log.event, "Player resumed from buffering")
-                            self.state = .playing
-                            // Only play if we were previously playing
-                            if self.state == .playing {
-                                player.play()
-                            }
-                        }
-                    }
-                
-                // Add time observation to detect stalls
-                let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-                timeObservation = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
-                    guard let self = self else { return }
-                    // Log periodic time updates for debugging
-                    if self.state == .playing {
-                        Log.p(Log.video, Log.event, "Playback time: \(time.seconds)")
-                    }
-                }
-                
-            } catch {
-                Log.p(Log.video, Log.event, Log.error, "Player setup failed: \(error.localizedDescription)")
-                state = .failed(error.localizedDescription)
+            if remaining < 0.1 {
+                Log.p(Log.video, Log.event, "⏳ End of video - looping")
+                player.seek(to: .zero)
+                player.play()
             }
         }
         
-        // Set up video completion notification
         NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(playerItemDidReachEnd),
-            name: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem
-        )
-    }
-    
-    func setupControlsTimer() {
-        controlsTimer?.invalidate()
-        controlsTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-            Task { @MainActor in
-                guard let self = self else { return }
-                withAnimation {
-                    self.showingControls = false
-                }
-            }
+            forName: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem,
+            queue: .main
+        ) { [weak player] _ in
+            guard let player = player else { return }
+            Log.p(Log.video, Log.event, "🔄 End notification - looping")
+            player.seek(to: .zero)
+            player.play()
         }
     }
     
     func togglePlayback() {
-        guard let player = player, state.isPlayable else { return }
-        
-        if state == .playing {
-            Log.p(Log.video, Log.event, "Pausing playback")
-            player.pause()
-            state = .paused
-        } else {
-            Log.p(Log.video, Log.event, "Resuming playback")
-            player.play()
-            state = .playing
-        }
-    }
-    
-    func checkUserReaction() {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
-        
-        Task {
-            do {
-                let snapshot = try await Firestore.firestore()
-                    .collection("reactions")
-                    .whereField("userId", isEqualTo: userId)
-                    .whereField("videoId", isEqualTo: video.id)
-                    .getDocuments()
-                
-                await MainActor.run {
-                    hasUserReaction = !snapshot.documents.isEmpty
-                }
-            } catch {
-                Log.p(Log.video, Log.read, Log.error, "Failed to check reaction: \(error)")
-            }
-        }
-    }
-    
-    func handleReaction(isLike: Bool) {
-        guard let userId = Auth.auth().currentUser?.uid else { return }
-        
-        Task {
-            do {
-                let db = Firestore.firestore()
-                let reactionData: [String: Any] = [
-                    "userId": userId,
-                    "videoId": video.id,
-                    "isLike": isLike,
-                    "createdAt": FieldValue.serverTimestamp()
-                ]
-                
-                try await db.collection("reactions").addDocument(data: reactionData)
-                
-                let updateData: [String: Any] = [
-                    "engagement.\(isLike ? "likeCount" : "dislikeCount")": FieldValue.increment(Int64(1))
-                ]
-                
-                try await db.collection("videos").document(video.id)
-                    .updateData(updateData)
-                
-                await MainActor.run { hasUserReaction = true }
-            } catch {
-                Log.p(Log.video, Log.save, Log.error, "Failed to save reaction: \(error)")
-            }
-        }
-    }
-    
-    @objc private func playerItemDidReachEnd() {
-        Log.p(Log.video, Log.event, "Video reached end, looping playback")
-        player?.seek(to: .zero)
-        player?.play()
-    }
-    
-    func updatePlayer(_ newPlayer: AVPlayer?) {
-        Log.p(Log.video, Log.event, "Updating player for video: \(video.id)")
-        
-        // Clean up existing player
-        statusObservation?.cancel()
-        bufferingObservation?.cancel()
-        if let timeObservation = timeObservation {
-            player?.removeTimeObserver(timeObservation)
-        }
-        
-        if let newPlayer = newPlayer {
-            setupExistingPlayer(newPlayer)
-        } else {
-            state = .loading
-            player = nil
-        }
+        guard let player = player else { return }
+        player.timeControlStatus == .playing ? player.pause() : player.play()
     }
     
     deinit {
-        Log.p(Log.video, Log.exit, "FeedVideoPlayerViewModel deinit for video: \(video.id)")
-        NotificationCenter.default.removeObserver(self)
-        setupTask?.cancel()
-        statusObservation?.cancel()
-        bufferingObservation?.cancel()
-        if let timeObservation = timeObservation {
-            player?.removeTimeObserver(timeObservation)
+        if let timeObserver = timeObserver {
+            player?.removeTimeObserver(timeObserver)
         }
-        controlsTimer?.invalidate()
-        cancellables.removeAll()
-        player?.pause()
-        player?.replaceCurrentItem(with: nil)
-        player = nil
+        NotificationCenter.default.removeObserver(self)
     }
 }
 
 struct FeedVideoPlayerView: View {
     let video: Video
     let size: CGSize
-    @StateObject private var viewModel: VideoSubscriberViewModel
     @StateObject private var playerController: FeedVideoPlayerViewModel
     
     init(video: Video, player: AVPlayer?, size: CGSize) {
         self.video = video
         self.size = size
-        _viewModel = StateObject(wrappedValue: VideoSubscriberViewModel(video: video))
-        _playerController = StateObject(wrappedValue: FeedVideoPlayerViewModel(video: video, player: nil))
+        _playerController = StateObject(wrappedValue: FeedVideoPlayerViewModel(video: video, player: player))
     }
     
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                // Always maintain a black background for visual continuity
                 Color.black
                 
-                // Content layer - only show player when it's fully ready
-                Group {
-                    if viewModel.state == .ready, let player = viewModel.player {
-                        CustomVideoPlayer(player: player)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                            .edgesIgnoringSafeArea(.all)
-                    }
-                    
-                    // Overlay layer - always present for visual continuity
-                    overlayContent
+                if let player = playerController.player {
+                    CustomVideoPlayer(player: player)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .edgesIgnoringSafeArea(.all)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                
+                controlsOverlay
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
             .onTapGesture {
                 withAnimation {
-                    playerController.showingControls.toggle()
+                    if playerController.showingControls {
+                        playerController.showingControls = false
+                    } else {
+                        playerController.togglePlayback()
+                    }
                 }
-            }
-            .onAppear {
-                Log.p(Log.video, Log.event, "FeedVideoPlayerView appeared for video: \(video.id)")
-                playerController.checkUserReaction()
-                playerController.setupControlsTimer()
-            }
-            .onDisappear {
-                Log.p(Log.video, Log.event, "FeedVideoPlayerView disappeared for video: \(video.id)")
-            }
-            .onChange(of: viewModel.player) { newPlayer in
-                Log.p(Log.video, Log.event, "Updating player controller with new player for video: \(video.id)")
-                playerController.updatePlayer(newPlayer)
             }
         }
     }
     
     @ViewBuilder
-    private var overlayContent: some View {
-        switch viewModel.state {
-        case .loading:
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                .scaleEffect(1.5)
-        case .ready:
-            if playerController.showingControls {
-                controlsOverlay
-            }
-        case .failed(let error):
-            VStack(spacing: 12) {
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .foregroundColor(.yellow)
-                    .font(.system(size: 40))
-                Text("Unable to load video")
-                    .foregroundColor(.white)
-                    .font(.headline)
-                Text(error)
-                    .foregroundColor(.white)
-                    .font(.subheadline)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal)
-            }
-        }
-    }
-    
     private var controlsOverlay: some View {
-        VStack {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(video.title)
-                        .font(.headline)
-                        .foregroundColor(.white)
-                    Text(video.username)
-                        .font(.subheadline)
-                        .foregroundColor(.gray)
-                }
-                Spacer()
-            }
-            .padding()
-            
-            Spacer()
-            
-            HStack {
-                Button(action: {
-                    playerController.togglePlayback()
-                }) {
-                    Image(systemName: playerController.state == .playing ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.title)
-                        .foregroundColor(.white)
-                }
-                
-                Spacer()
-                
-                if !playerController.hasUserReaction {
-                    HStack(spacing: 20) {
-                        Button(action: { playerController.handleReaction(isLike: true) }) {
-                            Image(systemName: "hand.thumbsup")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
-                        
-                        Button(action: { playerController.handleReaction(isLike: false) }) {
-                            Image(systemName: "hand.thumbsdown")
-                                .font(.title2)
-                                .foregroundColor(.white)
-                        }
+        if playerController.showingControls {
+            VStack {
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(video.title)
+                            .font(.headline)
+                            .foregroundColor(.white)
+                        Text(video.username)
+                            .font(.subheadline)
+                            .foregroundColor(.gray)
                     }
+                    Spacer()
                 }
+                .padding()
+                
+                Spacer()
             }
-            .padding()
-        }
-        .background(
-            LinearGradient(
-                gradient: Gradient(colors: [.black.opacity(0.7), .clear, .black.opacity(0.7)]),
-                startPoint: .top,
-                endPoint: .bottom
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [.black.opacity(0.7), .clear, .black.opacity(0.7)]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
             )
-        )
+        }
     }
 }
 

@@ -2,7 +2,6 @@ import SwiftUI
 import FirebaseFirestoreCombineSwift
 import FirebaseFirestore
 import Combine
-import ReelAI
 
 struct VideoListView: View {
     @StateObject private var viewModel = VideoListViewModel()

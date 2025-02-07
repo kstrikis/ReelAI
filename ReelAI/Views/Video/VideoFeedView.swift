@@ -64,9 +64,9 @@ struct VideoFeedView: View {
                     .rotationEffect(.degrees(-90))
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .edgesIgnoringSafeArea(.all)
-                    .onChange(of: viewModel.currentIndex) { newIndex in
-                        Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
-                        viewModel.handleIndexChange(newIndex)
+                    .onChange(of: viewModel.currentIndex) { oldValue, newValue in
+                        Log.p(Log.video, Log.event, "Feed index changed from \(oldValue) to \(newValue)")
+                        viewModel.handleIndexChange(newValue)
                     }
                 }
             }
@@ -125,7 +125,13 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     func handleIndexChange(_ newIndex: Int) {
-        Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
+        Log.p(Log.video, Log.event, "Feed index changed to \(newIndex), active players: \(preloadedPlayers.keys.joined(separator: ", "))")
+        
+        // First, pause ALL players immediately to ensure no background playback
+        for (videoId, player) in preloadedPlayers {
+            Log.p(Log.video, Log.event, "Pausing player for video: \(videoId)")
+            player.pause()
+        }
         
         // Clean up players that are no longer needed
         cleanupInactivePlayers(around: newIndex)
@@ -135,21 +141,25 @@ class VideoFeedViewModel: ObservableObject {
             loadMoreVideos()
         }
         
-        // Pause all players first
-        for (_, player) in preloadedPlayers {
-            player.pause()
-        }
-        
         // Only play the current video
         if newIndex < videos.count {
             let currentVideo = videos[newIndex]
+            
+            // Ensure current video is preloaded
             preloadVideo(currentVideo)
-            if let player = preloadedPlayers[currentVideo.id] {
-                player.play()
+            
+            // Play current video if available
+            if let currentPlayer = preloadedPlayers[currentVideo.id] {
+                Log.p(Log.video, Log.event, "Starting playback for video: \(currentVideo.id)")
+                currentPlayer.seek(to: .zero)
+                currentPlayer.play()
+            } else {
+                Log.p(Log.video, Log.event, Log.error, "Player not available for current video: \(currentVideo.id)")
             }
             
-            // Preload but don't play the next video
+            // Preload next video (but don't play it)
             if newIndex + 1 < videos.count {
+                Log.p(Log.video, Log.event, "Preloading next video at index \(newIndex + 1)")
                 preloadVideo(videos[newIndex + 1])
             }
         }
@@ -296,8 +306,11 @@ class VideoFeedViewModel: ObservableObject {
         // Don't reload if we already have a player
         if preloadedPlayers[video.id] != nil {
             Log.p(Log.video, Log.event, "Player already exists for video: \(video.id)")
-            // Ensure the player is available through the publisher
-            updatePlayerAvailability(videoId: video.id, player: preloadedPlayers[video.id])
+            // Ensure the player is available through the publisher but starts paused
+            if let player = preloadedPlayers[video.id] {
+                player.pause()  // Ensure it starts paused
+                updatePlayerAvailability(videoId: video.id, player: player)
+            }
             return
         }
         
@@ -319,22 +332,27 @@ class VideoFeedViewModel: ObservableObject {
                 
                 let asset = AVURLAsset(url: downloadURL)
                 
-                // Load essential properties and transform
-                try await asset.load(.isPlayable, .tracks)
-                
-                // Ensure video is playable
-                guard asset.isPlayable else {
-                    throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video is not playable"])
+                // Modern asset loading
+                let isPlayable = try await asset.load(.isPlayable)
+                let duration = try await asset.load(.duration)
+                guard isPlayable && duration.seconds > 0 else {
+                    throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid video duration"])
                 }
                 
                 // Load video tracks
                 let tracks = try await asset.loadTracks(withMediaType: .video)
-                guard !tracks.isEmpty else {
+                guard let track = tracks.first else {
                     throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "No video tracks available"])
                 }
                 
-                // Load track properties properly
-                try await tracks[0].load(.naturalSize, .preferredTransform)
+                // Load track properties
+                let (naturalSize, preferredTransform) = try await (
+                    track.load(.naturalSize),
+                    track.load(.preferredTransform)
+                )
+                guard naturalSize.width > 0 && naturalSize.height > 0 else {
+                    throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid video dimensions"])
+                }
                 
                 // Create player item with specific configuration
                 let playerItem = AVPlayerItem(asset: asset)
@@ -342,8 +360,7 @@ class VideoFeedViewModel: ObservableObject {
                 // Create player with specific configuration
                 let player = AVPlayer(playerItem: playerItem)
                 player.automaticallyWaitsToMinimizeStalling = true
-                // Start paused by default
-                player.pause()
+                player.pause()  // Ensure it starts paused
                 
                 if Task.isCancelled { return }
                 
@@ -356,11 +373,15 @@ class VideoFeedViewModel: ObservableObject {
                     updatePlayerAvailability(videoId: video.id, player: player)
                     Log.p(Log.video, Log.event, Log.success, "Successfully preloaded video: \(video.id)")
                     
-                    // If this is the first video and it's now ready, update the state and play it
+                    // Add explicit play command for non-first videos
                     if !isFirstVideoReady && video.id == videos.first?.id {
                         isFirstVideoReady = true
-                        player.play()
                         Log.p(Log.video, Log.event, Log.success, "First video is ready for playback")
+                        player.play()
+                    } else {
+                        // Ensure subsequent videos are paused but ready
+                        player.pause()
+                        player.seek(to: .zero)
                     }
                 }
             } catch {
@@ -377,11 +398,12 @@ class VideoFeedViewModel: ObservableObject {
     
     private func cleanupPlayer(for videoId: String) {
         if let player = preloadedPlayers[videoId] {
-            player.pause()
+            Log.p(Log.video, Log.event, "Cleaning up player for video: \(videoId), active players before cleanup: \(preloadedPlayers.keys.joined(separator: ", "))")
+            player.pause()  // Ensure playback stops
             player.replaceCurrentItem(with: nil)
             preloadedPlayers[videoId] = nil
             updatePlayerAvailability(videoId: videoId, player: nil)
-            Log.p(Log.video, Log.event, "Cleaned up player for video: \(videoId)")
+            Log.p(Log.video, Log.event, "Player cleanup complete for video: \(videoId), remaining players: \(preloadedPlayers.keys.joined(separator: ", "))")
         }
         // Cancel any ongoing preload task
         preloadTasks[videoId]?.cancel()
@@ -389,17 +411,15 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     private func cleanupInactivePlayers(around index: Int) {
-        // Only keep the current and next video players
-        let activeVideoIds = Set([
-            videos[index].id,
-            index + 1 < videos.count ? videos[index + 1].id : ""
-        ].filter { !$0.isEmpty })
+        // Define active videos as current and next
+        let activeIndices = [index, index + 1].filter { $0 < videos.count }
+        let activeVideoIds = Set(activeIndices.map { videos[$0].id })
         
-        // Cleanup players that are no longer needed
-        for (videoId, _) in preloadedPlayers {
-            if !activeVideoIds.contains(videoId) {
-                cleanupPlayer(for: videoId)
-            }
+        // Always protect first video
+        let protectedVideoIds = videos.prefix(1).map(\.id)
+        
+        preloadedPlayers = preloadedPlayers.filter { videoId, _ in
+            activeVideoIds.contains(videoId) || protectedVideoIds.contains(videoId)
         }
     }
     
@@ -430,6 +450,7 @@ class VideoFeedViewModel: ObservableObject {
     
     private func updatePlayerAvailability(videoId: String, player: AVPlayer?) {
         if let subject = playerSubjects[videoId] {
+            Log.p(Log.video, Log.event, "Updating player availability for video: \(videoId), player is \(player != nil ? "available" : "unavailable")")
             subject.send(player)
             Log.p(Log.video, Log.event, "Updated player availability for video: \(videoId)")
         }
