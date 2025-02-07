@@ -36,7 +36,14 @@ class UnifiedVideoHandler: ObservableObject {
         isLoading = true
         Task {
             do {
-                let batch = try await FirestoreService.shared.fetchVideoBatch(limit: initialBatchSize) // Fetch initial batch with limit
+                // Use the existing FirestoreService
+                let initialCheck = try await FirestoreService.shared.fetchVideoBatch(startingAfter: nil, limit: 1)
+                if initialCheck.isEmpty {
+                    Log.p(Log.video, Log.event, "No videos found, attempting to seed...")
+                    try await FirestoreService.shared.seedVideos()
+                }
+
+                let batch = try await FirestoreService.shared.fetchVideoBatch(startingAfter: nil, limit: initialBatchSize)
                 Log.p(Log.video, Log.event, "Received \(batch.count) videos")
 
                 await MainActor.run {
@@ -51,7 +58,7 @@ class UnifiedVideoHandler: ObservableObject {
             }
         }
     }
-    
+
     //Function to load more videos.
     func loadMoreVideos() {
            // Prevent multiple simultaneous loads
@@ -89,6 +96,7 @@ class UnifiedVideoHandler: ObservableObject {
     // MARK: - Player Management
 
     func getPlayer(for video: Video) -> AVPlayer? {
+        //  'id' is guaranteed by @DocumentID after loading from Firestore
         return preloadedPlayers[video.id]
     }
 
@@ -111,16 +119,16 @@ class UnifiedVideoHandler: ObservableObject {
     }
 
     private func preloadVideo(_ video: Video) {
-        guard preloadedPlayers[video.id] == nil else { return }
-
-        // Cancel any existing preload task for this video.
-        preloadTasks[video.id]?.cancel()
+        let id = video.id
+        if preloadedPlayers[id] != nil { return }
 
         let task: Task<Void, Error> = Task {
             do {
-                Log.p(Log.video, Log.event, "Preloading video: \(video.id)")
-                guard let url = try await FirestoreService.shared.getVideoDownloadURL(videoId: video.id) else {
-                    throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid URL"])
+                Log.p(Log.video, Log.event, "Preloading video: \(id)")
+                // Use FirestoreService to get the URL.
+                guard let url = try await FirestoreService.shared.getVideoDownloadURL(videoId: id) else {
+                    Log.p(Log.video, Log.event, Log.error, "Failed to get download URL for \(id)")
+                    return // Exit gracefully if no URL.
                 }
 
                 let asset = AVURLAsset(url: url)
@@ -128,24 +136,22 @@ class UnifiedVideoHandler: ObservableObject {
                 let player = AVPlayer(playerItem: playerItem)
 
                 await MainActor.run {
-                    preloadedPlayers[video.id] = player
-                    playerSubjects[video.id]?.send(player)
-                    // NO auto-play here.  Playback is handled in handleIndexChange.
-                    Log.p(Log.video, Log.event, "Successfully preloaded video: \(video.id)")
+                    preloadedPlayers[id] = player
+                    playerSubjects[id]?.send(player)
+                    Log.p(Log.video, Log.event, "Successfully preloaded video: \(id)")
                 }
             } catch {
-                Log.p(Log.video, Log.event, Log.error, "Preload failed for \(video.id): \(error)")
-                 // Consider setting an error state on the video object itself.
+                Log.p(Log.video, Log.event, Log.error, "Preload failed for \(id): \(error)")
             }
         }
 
-        preloadTasks[video.id] = task
+        preloadTasks[id] = task
     }
-    
+
     func handleIndexChange(_ newIndex: Int) {
         // Use modulo to wrap the index.  This is the core of infinite scrolling.
         let wrappedIndex = newIndex % videos.count
-        
+
         Log.p(Log.video, Log.event, "Handling index change to \(newIndex). Wrapped index: \(wrappedIndex)")
 
         // Pause *all* players.
@@ -153,17 +159,18 @@ class UnifiedVideoHandler: ObservableObject {
 
         // Update current index to the *wrapped* index.
         currentIndex = wrappedIndex
-        
+
         //Get and manage video by the *wrapped* index
         let currentVideo = videos[wrappedIndex]
-        if let player = preloadedPlayers[currentVideo.id] {
-              Log.p(Log.video, Log.event, "Playing existing player for video: \(currentVideo.id)")
-              player.seek(to: .zero) // Ensure it starts from the beginning.
-              player.play()
-          } else {
-            Log.p(Log.video, Log.event, "Preloading the current video as we did not find it: \(currentVideo.id)")
-              preloadVideo(currentVideo) // Preload if not available.
-          }
+        let id = currentVideo.id
+        if let player = preloadedPlayers[id] {
+            Log.p(Log.video, Log.event, "Playing existing player for video: \(id)")
+            player.seek(to: CMTime.zero)
+            player.play()
+        } else {
+            Log.p(Log.video, Log.event, "Preloading the current video as we did not find it: \(id)")
+            preloadVideo(currentVideo)
+        }
 
         // Preload adjacent videos based on *wrapped* indices.
         let adjacentIndices = [wrappedIndex - 1, wrappedIndex + 1]
@@ -177,8 +184,8 @@ class UnifiedVideoHandler: ObservableObject {
             }
         }
 
-        cleanupInactivePlayers(around: wrappedIndex) //Cleanup also now uses wrapped index
-        
+        cleanupInactivePlayers(around: wrappedIndex)
+
         //Pagination check: Load more if near the end.
         if wrappedIndex >= videos.count - 2 {
             loadMoreVideos()
@@ -188,7 +195,8 @@ class UnifiedVideoHandler: ObservableObject {
     private func cleanupInactivePlayers(around index: Int) {
         //Calculate active indices, taking into account wrapping.
         let activeIndices = [index - 1, index, index + 1].map { $0 % videos.count }.filter { $0 >= 0 }
-        var activeVideoIds = Set(activeIndices.map { videos[$0].id })
+        //  'id' will be non-nil after loading from Firestore
+        var activeVideoIds = Set(activeIndices.compactMap { videos[$0].id })
 
         // Always keep first video loaded.
         if let firstVideoId = videos.first?.id {
@@ -200,13 +208,14 @@ class UnifiedVideoHandler: ObservableObject {
              if !activeVideoIds.contains(videoId) {
                  preloadTasks[videoId]?.cancel()
                  preloadTasks[videoId] = nil
+                 preloadedPlayers[videoId]?.pause() // Ensure the player is paused
                  preloadedPlayers[videoId] = nil
                  playerSubjects[videoId]?.send(nil)  // Important:  Notify subscribers that the player is gone.
                  playerSubjects[videoId] = nil      // Clean up the subject.
              }
          }
     }
-    
+
     func updateActiveVideos(_ videoId: String) {
         //Unused at the moment
         activeVideoIds.insert(videoId)
@@ -263,31 +272,46 @@ struct PageView<Content: View>: View {
     let axis: Axis
     let pages: [Content]
     @Binding var currentIndex: Int
-    @State private var scrollPosition: Int? // Use scrollPosition for the value
 
     var body: some View {
-        ScrollView(axis == .vertical ? .vertical : .horizontal, showsIndicators: false) {
-            LazyVStack(spacing: 0) {
-                ForEach(pages.indices, id: \.self) { index in
-                    pages[index]
-                        .frame(width: UIScreen.main.bounds.width, height: UIScreen.main.bounds.height)
-                        .id(index) // Use id for scroll target
+        GeometryReader { geometry in
+            ScrollViewReader { proxy in
+                ScrollView(axis == .vertical ? .vertical : .horizontal, showsIndicators: false) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(pages.indices, id: \.self) { index in
+                            pages[index]
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .id(index)
+                        }
+                    }
                 }
+                .scrollTargetLayout()
+                .scrollTargetBehavior(.paging)
+                .simultaneousGesture(
+                    DragGesture()
+                        .onEnded { gesture in
+                            let height = geometry.size.height
+                            let offset = gesture.translation.height
+
+                            // Determine direction and calculate new index
+                            let newIndex: Int
+                            if abs(offset) > height * 0.3 {
+                                newIndex = offset > 0 ?
+                                    max(currentIndex - 1, 0) :
+                                    min(currentIndex + 1, pages.count - 1)
+                            } else {
+                                newIndex = currentIndex
+                            }
+
+                            withAnimation {
+                                proxy.scrollTo(newIndex, anchor: .center)
+                                if newIndex != currentIndex {
+                                    UnifiedVideoHandler.shared.handleIndexChange(newIndex)
+                                }
+                            }
+                        }
+                )
             }
-            .scrollTargetLayout()
-        }
-        .scrollTargetBehavior(.paging)
-        .scrollPosition(id: $scrollPosition) // Use scrollPosition modifier
-        .onChange(of: scrollPosition) { oldValue, newValue in
-            if let newValue = newValue, newValue != currentIndex {
-                DispatchQueue.main.async {
-                    UnifiedVideoHandler.shared.handleIndexChange(newValue)
-                }
-            }
-        }
-        .onAppear {
-            //Initial setting
-            self.scrollPosition = currentIndex
         }
     }
 }
@@ -329,17 +353,17 @@ struct UnifiedVideoPlayer: View {
                 }
                 isPlaying.toggle() // Toggle the local play/pause state.
             }
-           
+
         }
         .onReceive(playerPublisher) { newPlayer in
             //Crucial: listen to player changes published by UnifiedVideoHandler
             self.player = newPlayer
         }
     }
-    
+
     private func setupPlayerObservations() {
         guard let player = player else { return }
-        
+
         NotificationCenter.default.addObserver(
             forName: .AVPlayerItemDidPlayToEndTime,
             object: player.currentItem,
@@ -349,7 +373,7 @@ struct UnifiedVideoPlayer: View {
             player.play()
             isPlaying = true
         }
-        
+
         // Store in our own cancellables instead of UnifiedVideoHandler's
         player.publisher(for: \.rate)
             .receive(on: DispatchQueue.main)
@@ -434,32 +458,4 @@ struct CustomVideoPlayer: UIViewControllerRepresentable {
 // Helper class to hold subscriptions for the view
 class SubscriptionHolder: ObservableObject {
     var cancellables: Set<AnyCancellable> = []
-}
-
-// MARK: - Firestore Service (Modified for Pagination)
-
-extension FirestoreService {
-    
-    //Adds optional starting point and limits
-    func fetchVideoBatch(startingAfter lastVideo: Video? = nil, limit: Int) async throws -> [Video] {
-        let videosCollection = Firestore.firestore().collection("videos")
-        var query: Query = videosCollection.order(by: "createdAt", descending: true).limit(to: limit) // Order by creation date.
-
-        // If a starting video is provided, start the query after it.
-        if let lastVideo = lastVideo {
-            query = query.start(afterDocument: try await Firestore.firestore().collection("videos").document(lastVideo.id).getDocument())
-        }
-
-        let snapshot = try await query.getDocuments()
-        let videos: [Video] = snapshot.documents.compactMap { document in
-            do {
-                let video = try document.data(as: Video.self)
-                return video
-            } catch {
-                Log.p(Log.firebase, Log.read, Log.error, "Error decoding video: \(error)")
-                return nil
-            }
-        }
-        return videos
-    }
 }

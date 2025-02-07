@@ -12,6 +12,30 @@ struct DebugMenuView: View {
     
     var body: some View {
         List {
+            Section("Data Management") {
+                Button(action: { viewModel.seedData() }) {
+                    HStack {
+                        Text("Seed Sample Data")
+                        Spacer()
+                        if viewModel.isSeeding {
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(viewModel.isSeeding)
+                
+                if !viewModel.seedingResults.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(viewModel.seedingResults, id: \.self) { result in
+                            Text(result)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+            
             Section("Video Tools") {
                 Button(action: {
                     Log.p(Log.debug, Log.analyze, "Opening video list")
@@ -150,6 +174,8 @@ class DebugViewModel: ObservableObject {
     @Published var isDeleting = false
     @Published var auditResults: [AuditResult] = []
     @Published var auditStats: AuditStats = AuditStats()
+    @Published var isSeeding = false
+    @Published var seedingResults: [String] = []
     
     private let db = Firestore.firestore()
     private let storage = Storage.storage()
@@ -537,6 +563,36 @@ class DebugViewModel: ObservableObject {
     
     func clearResults() {
         auditResults.removeAll()
+    }
+    
+    func seedData() {
+        isSeeding = true
+        seedingResults.removeAll()
+        
+        Task {
+            do {
+                await addSeedingResult("Starting data seeding process...")
+                
+                // Seed videos (which will also seed users)
+                await addSeedingResult("Seeding users and videos...")
+                try await FirestoreService.shared.seedVideos()
+                
+                await MainActor.run {
+                    addSeedingResult("✅ Seeding completed successfully!")
+                    isSeeding = false
+                }
+            } catch {
+                await MainActor.run {
+                    addSeedingResult("❌ Error seeding data: \(error.localizedDescription)")
+                    isSeeding = false
+                }
+            }
+        }
+    }
+    
+    @MainActor
+    private func addSeedingResult(_ result: String) {
+        seedingResults.append(result)
     }
 }
 
