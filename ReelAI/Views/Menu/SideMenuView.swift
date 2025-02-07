@@ -7,6 +7,10 @@ struct SideMenuView: View {
     @State private var showDebugMenu = false
     @State private var stars: [(position: CGPoint, opacity: Double)] = []
 
+    // Deep space colors matching AI Tools view exactly
+    private let spaceBackground = Color(red: 0.1, green: 0.1, blue: 0.2)
+    private let spaceAccent = Color(red: 0.15, green: 0.1, blue: 0.25)
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
@@ -45,7 +49,7 @@ struct SideMenuView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
-                    .background(Color.black.opacity(0.7))
+                    .background(spaceAccent)
 
                     // Menu items
                     ScrollView {
@@ -113,19 +117,52 @@ struct SideMenuView: View {
                 .frame(width: min(geometry.size.width * 0.8, 300))
                 .background(
                     ZStack {
-                        Color.black
-                        // Starfield effect
-                        ForEach(0..<stars.count, id: \.self) { index in
+                        // Gradient background matching AI Tools
+                        LinearGradient(
+                            colors: [spaceBackground, spaceAccent],
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                        
+                        // Starfield effect matching AI Tools
+                        // Distant stars (small)
+                        ForEach(0..<100) { _ in
                             Circle()
-                                .fill(Color.white)
+                                .fill(.white.opacity(.random(in: 0.1...0.3)))
+                                .frame(width: 1, height: 1)
+                                .position(
+                                    x: .random(in: 0...300),
+                                    y: .random(in: 0...800)
+                                )
+                        }
+                        // Mid-distance stars (medium)
+                        ForEach(0..<50) { _ in
+                            Circle()
+                                .fill(.white.opacity(.random(in: 0.3...0.5)))
                                 .frame(width: 2, height: 2)
-                                .position(stars[index].position)
-                                .opacity(stars[index].opacity)
+                                .position(
+                                    x: .random(in: 0...300),
+                                    y: .random(in: 0...800)
+                                )
+                        }
+                        // Close stars (large)
+                        ForEach(0..<20) { _ in
+                            Circle()
+                                .fill(.white.opacity(.random(in: 0.5...0.7)))
+                                .frame(width: 3, height: 3)
+                                .position(
+                                    x: .random(in: 0...300),
+                                    y: .random(in: 0...800)
+                                )
                         }
                     }
                 )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 15, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.1), lineWidth: 1)
+                )
                 .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
-                .shadow(radius: 10)
+                .shadow(color: spaceAccent.opacity(0.5), radius: 10, x: -5, y: 0)
                 .offset(x: isPresented ? 0 : geometry.size.width)
                 .offset(y: geometry.safeAreaInsets.top)
             }
@@ -143,7 +180,6 @@ struct SideMenuView: View {
         #endif
         .onAppear {
             Log.p(Log.app, Log.start, "Side menu appeared")
-            generateStars()
         }
         .onDisappear {
             Log.p(Log.app, Log.exit, "Side menu disappeared")
@@ -151,13 +187,13 @@ struct SideMenuView: View {
     }
     
     private func generateStars() {
-        stars = (0..<100).map { _ in
+        stars = (0..<150).map { _ in  // Increased star count for more density
             (
                 position: CGPoint(
                     x: CGFloat.random(in: 0...300),
                     y: CGFloat.random(in: 0...800)
                 ),
-                opacity: Double.random(in: 0.1...0.8)
+                opacity: Double.random(in: 0.1...0.9)  // Increased max opacity
             )
         }
     }

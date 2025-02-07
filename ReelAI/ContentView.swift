@@ -11,7 +11,7 @@ import FirebaseAuth
 
 struct ContentView: View {
     @EnvironmentObject private var authService: AuthenticationService
-    @State private var selectedTab = 1 // 0: Camera, 1: AI Tools, 2: Home, 3: Menu
+    @State private var selectedTab = 1 // 0: Camera, 1: AI Tools
     @State private var showSideMenu = false
 
     var body: some View {
@@ -23,17 +23,9 @@ struct ContentView: View {
                         .ignoresSafeArea()
                         .tag(0)
 
-                    // AI Tools (Center-Left)
+                    // AI Tools (Right)
                     AIToolsView()
                         .tag(1)
-
-                    // Video List (Center-Right)
-                    VideoListView()
-                        .tag(2)
-
-                    // Menu View (Right)
-                    SideMenuView(isPresented: .constant(true))
-                        .tag(3)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .onChange(of: selectedTab) { _, newValue in
@@ -59,6 +51,7 @@ struct ContentView: View {
                         .transition(.opacity)
                 }
             }
+            .spaceBackground()
         }
         .onAppear {
             Log.p(Log.app, Log.start, "Content view appeared")

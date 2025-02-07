@@ -144,8 +144,18 @@ struct DebugMenuView: View {
                 }
             }
         }
+        .spaceBackground()
+        .scrollContentBackground(.hidden)
         .navigationTitle("Debug Tools")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) {
+                Button("Done") {
+                    dismiss()
+                }
+                .foregroundColor(.white)
+            }
+        }
         .sheet(isPresented: $showVideoList) {
             NavigationView {
                 VideoListView()

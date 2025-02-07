@@ -14,9 +14,13 @@ struct ProfileView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background
-                Color.black.ignoresSafeArea()
-
+                // Force full width background
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(SpaceBackground())
+                    .ignoresSafeArea()
+                
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 20) {
                         // Profile Image (placeholder for now)
@@ -110,9 +114,10 @@ struct ProfileView: View {
                     })
                 }
             }
-            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(Color.clear, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
+        .navigationViewStyle(.stack)
         .onAppear {
             Log.p(Log.user, Log.start, "Profile view appeared")
             setupInitialValues()
