@@ -48,49 +48,23 @@ struct VideoFeedView: View {
                     }
                 } else {
                     TabView(selection: $viewModel.currentIndex) {
-                        ForEach(0..<(viewModel.videos.count + 1), id: \.self) { index in
-                            if index == viewModel.videos.count {
-                                // Dummy page: duplicate of the first video
-                                if let firstVideo = viewModel.videos.first, let player = viewModel.getPlayer(for: firstVideo) {
-                                    FeedVideoPlayerView(
-                                        video: firstVideo,
-                                        player: player,
-                                        size: geometry.size
-                                    )
-                                    .frame(width: geometry.size.width, height: geometry.size.height)
-                                    .rotationEffect(.degrees(90))
-                                    .tag(index)
-                                    .onAppear {
-                                        Log.p(Log.video, Log.event, "Reached dummy page, resetting feed to beginning")
-                                        DispatchQueue.main.async {
-                                            viewModel.currentIndex = 0
-                                        }
-                                    }
-                                } else {
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .frame(width: geometry.size.width, height: geometry.size.height)
-                                        .rotationEffect(.degrees(90))
-                                        .tag(index)
-                                }
+                        ForEach(0..<viewModel.videos.count, id: \.self) { index in
+                            if let player = viewModel.getPlayer(for: viewModel.videos[index]) {
+                                FeedVideoPlayerView(
+                                    video: viewModel.videos[index],
+                                    player: player,
+                                    size: geometry.size
+                                )
+                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .rotationEffect(.degrees(90))
+                                .tag(index)
                             } else {
-                                if let player = viewModel.getPlayer(for: viewModel.videos[index]) {
-                                    FeedVideoPlayerView(
-                                        video: viewModel.videos[index],
-                                        player: player,
-                                        size: geometry.size
-                                    )
+                                // Show loading placeholder until player is ready
+                                ProgressView()
+                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
                                     .frame(width: geometry.size.width, height: geometry.size.height)
                                     .rotationEffect(.degrees(90))
                                     .tag(index)
-                                } else {
-                                    // Show loading placeholder until player is ready
-                                    ProgressView()
-                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                        .frame(width: geometry.size.width, height: geometry.size.height)
-                                        .rotationEffect(.degrees(90))
-                                        .tag(index)
-                                }
                             }
                         }
                     }
@@ -124,10 +98,11 @@ class VideoFeedViewModel: ObservableObject {
     
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var cancellables = Set<AnyCancellable>()
-    private let preloadWindow = 4  // Increased from 3 to 4 to allow more aggressive preloading on fast swipes
+    private let preloadWindow = 2  // Reduced to 2 to minimize resource usage
     private let db = Firestore.firestore()
     private var lastDocumentSnapshot: DocumentSnapshot?
-    private let batchSize = 10
+    private let batchSize = 5  // Reduced batch size for faster initial load
+    private var preloadTasks: [String: Task<Void, Never>] = [:]  // Track preload tasks
     
     init() {
         Log.p(Log.video, Log.start, "Initializing video feed")
@@ -289,26 +264,28 @@ class VideoFeedViewModel: ObservableObject {
     private func preloadVideo(_ video: Video) {
         Log.p(Log.video, Log.event, "Preloading video: \(video.id)")
         
-        // Don't reload if we already have a player
-        if preloadedPlayers[video.id] != nil {
-            Log.p(Log.video, Log.event, "Player already exists for video: \(video.id)")
-            return
-        }
+        // Cancel any existing preload task for this video
+        preloadTasks[video.id]?.cancel()
         
-        Task {
+        // Create new preload task
+        let task = Task {
             do {
                 // Get a reference to the video in Firebase Storage
                 let storage = Storage.storage()
                 let videoRef = storage.reference().child("videos/\(video.ownerId)/\(video.id).mp4")
                 
-                // Get the authenticated download URL
-                let downloadURL = try await videoRef.downloadURL()
+                // Get the authenticated download URL with timeout
+                let downloadURL = try await withTimeout(seconds: 5) {
+                    try await videoRef.downloadURL()
+                }
                 Log.p(Log.video, Log.event, Log.success, "Got authenticated download URL for video: \(video.id)")
                 
                 let asset = AVURLAsset(url: downloadURL)
                 
-                // Load essential properties first
-                try await asset.load(.isPlayable, .duration, .tracks)
+                // Load essential properties with timeout
+                try await withTimeout(seconds: 5) {
+                    try await asset.load(.isPlayable, .duration, .tracks)
+                }
                 
                 // Ensure video is playable
                 guard asset.isPlayable else {
@@ -317,20 +294,19 @@ class VideoFeedViewModel: ObservableObject {
                 
                 // Create player item with specific configuration
                 let playerItem = AVPlayerItem(asset: asset)
-                playerItem.preferredForwardBufferDuration = 5.0  // Increased buffer
+                playerItem.preferredForwardBufferDuration = 2.0  // Reduced buffer for faster switching
                 
                 // Create player with specific configuration
                 let player = AVPlayer(playerItem: playerItem)
                 player.automaticallyWaitsToMinimizeStalling = true
                 player.preventsDisplaySleepDuringVideoPlayback = true
                 
+                if Task.isCancelled { return }
+                
                 // Set up player
                 await MainActor.run {
                     // Clean up old player if it exists
-                    if let oldPlayer = preloadedPlayers[video.id] {
-                        oldPlayer.pause()
-                        oldPlayer.replaceCurrentItem(with: nil)
-                    }
+                    cleanupPlayer(for: video.id)
                     
                     preloadedPlayers[video.id] = player
                     Log.p(Log.video, Log.event, Log.success, "Successfully preloaded video: \(video.id)")
@@ -345,10 +321,12 @@ class VideoFeedViewModel: ObservableObject {
                 Log.p(Log.video, Log.event, Log.error, "Failed to preload video: \(error.localizedDescription)")
                 // Clear the player on error
                 await MainActor.run {
-                    preloadedPlayers[video.id] = nil
+                    cleanupPlayer(for: video.id)
                 }
             }
         }
+        
+        preloadTasks[video.id] = task
     }
     
     private func cleanupPlayer(for videoId: String) {
@@ -358,6 +336,9 @@ class VideoFeedViewModel: ObservableObject {
             preloadedPlayers[videoId] = nil
             Log.p(Log.video, Log.event, "Cleaned up player for video: \(videoId)")
         }
+        // Cancel any ongoing preload task
+        preloadTasks[videoId]?.cancel()
+        preloadTasks[videoId] = nil
     }
     
     private func cleanupInactivePlayers(around index: Int) {
@@ -370,6 +351,39 @@ class VideoFeedViewModel: ObservableObject {
                 cleanupPlayer(for: videoId)
             }
         }
+    }
+    
+    private func withTimeout<T>(seconds: TimeInterval, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * Double(NSEC_PER_SEC)))
+                throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Operation timed out"])
+            }
+            
+            let result = try await group.next()!
+            group.cancelAll()
+            return result
+        }
+    }
+    
+    deinit {
+        Log.p(Log.video, Log.exit, "VideoFeedViewModel deinit")
+        // Cancel all preload tasks
+        for (_, task) in preloadTasks {
+            task.cancel()
+        }
+        preloadTasks.removeAll()
+        
+        // Clean up all players
+        for (videoId, _) in preloadedPlayers {
+            cleanupPlayer(for: videoId)
+        }
+        preloadedPlayers.removeAll()
+        cancellables.removeAll()
     }
 }
 
