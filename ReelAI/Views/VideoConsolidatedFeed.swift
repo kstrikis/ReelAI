@@ -17,6 +17,8 @@ class UnifiedVideoHandler: ObservableObject {
     @Published var isLoading = false
     @Published var isFirstVideoReady = false //Kept for any potential empty state management
     @Published private(set) var activeVideoIds: Set<String> = [] //Probably unused at the moment, but no harm done
+    private var isHandlingSwipe = false // Track if we're in the middle of a swipe operation
+    private var swipeHandlingTask: Task<Void, Never>? // Keep track of the current swipe handling task
 
     // Player management
     private var preloadedPlayers: [String: AVPlayer] = [:]
@@ -65,8 +67,11 @@ class UnifiedVideoHandler: ObservableObject {
 
     //Function to load more videos.
     func loadMoreVideos() {
-           // Prevent multiple simultaneous loads
-           guard !isLoading else { return }
+           // Prevent loading during swipe animations or if already loading
+           guard !isLoading && !isHandlingSwipe else { 
+               Log.p(Log.video, Log.event, "Skipping loadMoreVideos - System is \(isHandlingSwipe ? "handling swipe" : "already loading")")
+               return 
+           }
            isLoading = true
 
            Task {
@@ -74,7 +79,15 @@ class UnifiedVideoHandler: ObservableObject {
                    // Use random videos for pagination too
                    let newVideos = try await FirestoreService.shared.fetchRandomVideos(count: paginationBatchSize)
                    Log.p(Log.video, Log.event, "Fetched \(newVideos.count) more random videos")
-                   await MainActor.run{
+                   
+                   // Double check we're not in the middle of a swipe before applying changes
+                   guard !isHandlingSwipe else {
+                       Log.p(Log.video, Log.event, "Discarding fetched videos - system is handling swipe")
+                       isLoading = false
+                       return
+                   }
+                   
+                   await MainActor.run {
                        // Append the newly fetched videos to the existing array.
                        self.videos.append(contentsOf: newVideos)
                        // Preload videos after appending them, but *avoid* autoplaying them.
@@ -154,81 +167,94 @@ class UnifiedVideoHandler: ObservableObject {
     func handleIndexChange(_ newIndex: Int) {
         Log.p(Log.video, Log.event, "Beginning index change handling - New Index: \(newIndex)")
         
-        // Validate index bounds
-        guard newIndex >= 0 && newIndex < videos.count else {
-            Log.p(Log.video, Log.event, Log.error, "Invalid index: \(newIndex), videos count: \(videos.count)")
-            return
-        }
-
-        // 1. Save position and pause previous video
-        if videos.indices.contains(currentIndex), let oldPlayer = preloadedPlayers[videos[currentIndex].id] {
-            videoPositions[videos[currentIndex].id] = oldPlayer.currentTime()
-            // oldPlayer.pause()  // DISABLED: Need to figure out correct pause timing
-            Log.p(Log.video, Log.event, "Saving position for video: \(videos[currentIndex].id) at position: \(oldPlayer.currentTime().seconds)")
-        }
-
-        // 2. Update current index
-        currentIndex = newIndex
-        Log.p(Log.video, Log.event, "Updated current index to: \(newIndex)")
-
-        // 3. Handle current video - PRIORITY
-        let currentVideo = videos[newIndex]
-        if let player = preloadedPlayers[currentVideo.id] {
-            // Restore previous position or start from beginning
-            let position = videoPositions[currentVideo.id] ?? .zero
-            
-            // Ensure we're on the main thread for playback
-            Task { @MainActor in
-                player.seek(to: position)
-                player.play()
-                Log.p(Log.video, Log.event, "Playing existing player for current video: \(currentVideo.id) from position: \(position.seconds)")
-            }
-        } else {
-            Log.p(Log.video, Log.event, "Preloading current video: \(currentVideo.id)")
-            preloadVideo(currentVideo)
-        }
-
-        // 4. Start a background task for non-critical operations
-        Task {
-            // Add a 1-second delay before starting background operations
-            try? await Task.sleep(nanoseconds: 1_000_000_000)
-            
-            // Check for pagination first since it's most important for UX
-            if newIndex >= videos.count - 4 {
-                Log.p(Log.video, Log.event, "Near end of list, triggering pagination")
-                await MainActor.run {
-                    loadMoreVideos()
-                }
-            }
-
-            // Calculate which videos need preloading (excluding current and already loaded)
-            let adjacentIndices = Set([
-                max(0, newIndex - 1),
-                min(videos.count - 1, newIndex + 1)
-            ])
-            
-            let preloadIndices = adjacentIndices.filter { index in
-                let video = videos[index]
-                return preloadedPlayers[video.id] == nil // Only preload if not already loaded
+        // Cancel any existing swipe handling task
+        swipeHandlingTask?.cancel()
+        isHandlingSwipe = true
+        
+        // Create new task for this swipe
+        swipeHandlingTask = Task {
+            defer { 
+                // Ensure we reset the flag when the task completes or is cancelled
+                isHandlingSwipe = false 
             }
             
-            if !preloadIndices.isEmpty {
-                Log.p(Log.video, Log.event, "Preloading adjacent indices: \(preloadIndices)")
+            // Validate index bounds
+            guard newIndex >= 0 && newIndex < videos.count else {
+                Log.p(Log.video, Log.event, Log.error, "Invalid index: \(newIndex), videos count: \(videos.count)")
+                return
+            }
+
+            // 1. Save position and pause previous video
+            if videos.indices.contains(currentIndex), let oldPlayer = preloadedPlayers[videos[currentIndex].id] {
+                videoPositions[videos[currentIndex].id] = oldPlayer.currentTime()
+                oldPlayer.pause() // Targeted pause of the previous video
+                Log.p(Log.video, Log.event, "Pausing and saving position for video: \(videos[currentIndex].id) at position: \(oldPlayer.currentTime().seconds)")
+            }
+
+            // 2. Update current index
+            currentIndex = newIndex
+            Log.p(Log.video, Log.event, "Updated current index to: \(newIndex)")
+
+            // 3. Handle current video - PRIORITY
+            let currentVideo = videos[newIndex]
+            if let player = preloadedPlayers[currentVideo.id] {
+                // Restore previous position or start from beginning
+                let position = videoPositions[currentVideo.id] ?? .zero
                 
-                // Preload one at a time to avoid overwhelming the system
-                for index in preloadIndices {
-                    let video = videos[index]
-                    await MainActor.run {
-                        preloadVideo(video)
-                    }
-                    // Add a small delay between each preload
-                    try? await Task.sleep(nanoseconds: 100_000_000)
+                // Ensure we're on the main thread for playback
+                Task { @MainActor in
+                    player.seek(to: position)
+                    player.play()
+                    Log.p(Log.video, Log.event, "Playing existing player for current video: \(currentVideo.id) from position: \(position.seconds)")
                 }
+            } else {
+                Log.p(Log.video, Log.event, "Preloading current video: \(currentVideo.id)")
+                preloadVideo(currentVideo)
             }
 
-            // Finally, cleanup inactive players
-            await MainActor.run {
-                cleanupInactivePlayers(around: newIndex)
+            // 4. Start a background task for non-critical operations
+            Task {
+                // Wait for swipe animation to complete (typical iOS animation duration is 0.3s)
+                // Adding a bit more time (0.5s total) to ensure complete smoothness
+                try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms delay
+                
+                // Check for pagination first since it's most important for UX
+                if newIndex >= videos.count - 4 {
+                    Log.p(Log.video, Log.event, "Near end of list, triggering pagination")
+                    await MainActor.run {
+                        loadMoreVideos()
+                    }
+                }
+
+                // Calculate which videos need preloading (excluding current and already loaded)
+                let adjacentIndices = Set([
+                    max(0, newIndex - 1),
+                    min(videos.count - 1, newIndex + 1)
+                ])
+                
+                let preloadIndices = adjacentIndices.filter { index in
+                    let video = videos[index]
+                    return preloadedPlayers[video.id] == nil // Only preload if not already loaded
+                }
+                
+                if !preloadIndices.isEmpty {
+                    Log.p(Log.video, Log.event, "Preloading adjacent indices: \(preloadIndices)")
+                    
+                    // Preload one at a time to avoid overwhelming the system
+                    for index in preloadIndices {
+                        let video = videos[index]
+                        await MainActor.run {
+                            preloadVideo(video)
+                        }
+                        // Small delay between each preload to maintain smoothness
+                        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms delay
+                    }
+                }
+
+                // Finally, cleanup inactive players
+                await MainActor.run {
+                    cleanupInactivePlayers(around: newIndex)
+                }
             }
         }
     }
@@ -253,11 +279,13 @@ class UnifiedVideoHandler: ObservableObject {
             if let player = preloadedPlayers[id] {
                 player.pause()  // Ensure playback is stopped
                 player.replaceCurrentItem(with: nil)  // Remove the item to free up resources
+                Log.p(Log.video, Log.event, "Stopped playback and cleared item for video: \(id)")
             }
             preloadedPlayers[id] = nil
             playerSubjects[id]?.send(nil)
             playerSubjects[id] = nil
             videoPositions.removeValue(forKey: id)  // Clean up positions too
+            Log.p(Log.video, Log.event, "Removed all references for video: \(id)")
         }
     }
 
@@ -349,7 +377,11 @@ struct UnifiedVideoPlayer: View {
             if let player = player {
                 CustomVideoPlayer(player: player)
                     .onAppear(perform: setupPlayerObservations)
-                    .onDisappear(perform: cleanupPlayer)
+                    .onDisappear {
+                        // DO NOT pause here - it's unreliable during swipe transitions
+                        // Pausing is handled in UnifiedVideoHandler.handleIndexChange
+                        cleanupPlayer()
+                    }
             }
 
             controlsOverlay
@@ -395,8 +427,27 @@ struct UnifiedVideoPlayer: View {
     }
 
     private func cleanupPlayer() {
-        // player?.pause()  // DISABLED PAUSE POINT #3
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: player?.currentItem)
+        guard let player = player else { return }
+        
+        // Remove observers immediately
+        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
+        
+        // Delay the pause check to let the swipe animation complete
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 200_000_000)  // 200ms delay
+            
+            // Get the current handler state
+            let handler = UnifiedVideoHandler.shared
+            
+            // Only pause if this video is not the current one
+            if handler.videos.indices.contains(handler.currentIndex),
+               handler.videos[handler.currentIndex].id != video.id {
+                player.pause()
+                Log.p(Log.video, Log.event, "Delayed pause of non-current video: \(video.id)")
+            } else {
+                Log.p(Log.video, Log.event, "Skipped pausing current video: \(video.id)")
+            }
+        }
     }
 
     @ViewBuilder
