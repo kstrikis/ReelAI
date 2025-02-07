@@ -49,30 +49,21 @@ struct VideoFeedView: View {
                 } else {
                     TabView(selection: $viewModel.currentIndex) {
                         ForEach(0..<viewModel.videos.count, id: \.self) { index in
-                            if let player = viewModel.getPlayer(for: viewModel.videos[index]) {
-                                FeedVideoPlayerView(
-                                    video: viewModel.videos[index],
-                                    player: player,
-                                    size: geometry.size
-                                )
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .rotationEffect(.degrees(90))
-                                .tag(index)
-                            } else {
-                                // Show loading placeholder until player is ready
-                                ProgressView()
-                                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                                    .frame(width: geometry.size.width, height: geometry.size.height)
-                                    .rotationEffect(.degrees(90))
-                                    .tag(index)
-                            }
+                            FeedVideoPlayerView(
+                                video: viewModel.videos[index],
+                                player: viewModel.getPlayer(for: viewModel.videos[index]),
+                                size: geometry.size
+                            )
+                            .frame(width: geometry.size.width, height: geometry.size.height)
+                            .rotationEffect(.degrees(90))
+                            .tag(index)
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
                     .frame(width: geometry.size.height, height: geometry.size.width)
                     .rotationEffect(.degrees(-90))
                     .frame(width: geometry.size.width, height: geometry.size.height)
-                    .edgesIgnoringSafeArea(.all)  // Ensure full screen coverage
+                    .edgesIgnoringSafeArea(.all)
                     .onChange(of: viewModel.currentIndex) { newIndex in
                         Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
                         viewModel.handleIndexChange(newIndex)
@@ -120,8 +111,13 @@ class VideoFeedViewModel: ObservableObject {
             loadMoreVideos()
         }
         
-        // Preload videos in window
-        preloadVideosAround(index: newIndex)
+        // Only preload the current video and the next one
+        if newIndex < videos.count {
+            preloadVideo(videos[newIndex])
+            if newIndex + 1 < videos.count {
+                preloadVideo(videos[newIndex + 1])
+            }
+        }
     }
     
     func getPlayer(for video: Video) -> AVPlayer? {
@@ -132,14 +128,14 @@ class VideoFeedViewModel: ObservableObject {
         Log.p(Log.firebase, Log.read, "Loading initial batch of videos")
         isLoading = true
         videos = [] // Clear existing videos when reloading
-        isFirstVideoReady = false // Reset first video ready state
+        isFirstVideoReady = false
         
         db.collection("videos")
             .order(by: "createdAt", descending: true)
             .limit(to: batchSize)
             .snapshotPublisher()
-            .timeout(.seconds(10), scheduler: DispatchQueue.main) // Add timeout
-            .retry(2) // Add retry logic
+            .timeout(.seconds(10), scheduler: DispatchQueue.main)
+            .retry(2)
             .map { querySnapshot -> [Video] in
                 Log.p(Log.firebase, Log.read, "Received \(querySnapshot.documents.count) videos")
                 self.lastDocumentSnapshot = querySnapshot.documents.last
@@ -167,18 +163,18 @@ class VideoFeedViewModel: ObservableObject {
                 self.isLoading = false
                 if case .failure(let error) = completion {
                     Log.p(Log.firebase, Log.read, Log.error, "Failed to load videos: \(error.localizedDescription)")
-                    // Videos array will remain empty, triggering error UI
                 }
             } receiveValue: { [weak self] videos in
                 guard let self = self else { return }
                 self.videos = videos
-                self.isLoading = false
-                
                 Log.p(Log.video, Log.event, "Loaded initial \(videos.count) videos")
                 
-                // Preload first few videos and set isFirstVideoReady when the first one is ready
+                // Only preload the first two videos
                 if !videos.isEmpty {
-                    self.preloadVideosAround(index: 0)
+                    self.preloadVideo(videos[0])
+                    if videos.count > 1 {
+                        self.preloadVideo(videos[1])
+                    }
                 }
             }
             .store(in: &cancellables)
@@ -262,6 +258,12 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     private func preloadVideo(_ video: Video) {
+        // Don't reload if we already have a player
+        if preloadedPlayers[video.id] != nil {
+            Log.p(Log.video, Log.event, "Player already exists for video: \(video.id)")
+            return
+        }
+        
         Log.p(Log.video, Log.event, "Preloading video: \(video.id)")
         
         // Cancel any existing preload task for this video
@@ -274,32 +276,35 @@ class VideoFeedViewModel: ObservableObject {
                 let storage = Storage.storage()
                 let videoRef = storage.reference().child("videos/\(video.ownerId)/\(video.id).mp4")
                 
-                // Get the authenticated download URL with timeout
-                let downloadURL = try await withTimeout(seconds: 5) {
-                    try await videoRef.downloadURL()
-                }
+                // Get the authenticated download URL
+                let downloadURL = try await videoRef.downloadURL()
                 Log.p(Log.video, Log.event, Log.success, "Got authenticated download URL for video: \(video.id)")
                 
                 let asset = AVURLAsset(url: downloadURL)
                 
-                // Load essential properties with timeout
-                try await withTimeout(seconds: 5) {
-                    try await asset.load(.isPlayable, .duration, .tracks)
-                }
+                // Load essential properties and transform
+                try await asset.load(.isPlayable, .tracks)
                 
                 // Ensure video is playable
                 guard asset.isPlayable else {
                     throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video is not playable"])
                 }
                 
+                // Load video tracks
+                let tracks = try await asset.loadTracks(withMediaType: .video)
+                guard !tracks.isEmpty else {
+                    throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "No video tracks available"])
+                }
+                
+                // Load track properties properly
+                try await tracks[0].load(.naturalSize, .preferredTransform)
+                
                 // Create player item with specific configuration
                 let playerItem = AVPlayerItem(asset: asset)
-                playerItem.preferredForwardBufferDuration = 2.0  // Reduced buffer for faster switching
                 
                 // Create player with specific configuration
                 let player = AVPlayer(playerItem: playerItem)
                 player.automaticallyWaitsToMinimizeStalling = true
-                player.preventsDisplaySleepDuringVideoPlayback = true
                 
                 if Task.isCancelled { return }
                 
@@ -342,8 +347,11 @@ class VideoFeedViewModel: ObservableObject {
     }
     
     private func cleanupInactivePlayers(around index: Int) {
-        let activeIndices = Set((max(0, index - preloadWindow)...min(videos.count - 1, index + preloadWindow)))
-        let activeVideoIds = Set(activeIndices.map { videos[$0].id })
+        // Only keep the current and next video players
+        let activeVideoIds = Set([
+            videos[index].id,
+            index + 1 < videos.count ? videos[index + 1].id : ""
+        ].filter { !$0.isEmpty })
         
         // Cleanup players that are no longer needed
         for (videoId, _) in preloadedPlayers {

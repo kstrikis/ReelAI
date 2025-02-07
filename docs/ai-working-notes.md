@@ -290,6 +290,33 @@ A debug tool has been implemented to maintain data integrity across Firebase ser
   – Clear results after review
   – Use during development and testing phases
 
+──────────────────────────────────────────────
+7. Video Feed Implementation Notes (2024-02-06)
+──────────────────────────────────────────────
+Current Concerns:
+
+1. Resource Loading:
+   - Duplicate resource fetching detected in logs (GTMSessionFetcher "already running" warnings)
+   - Root cause: preloadVideosAround() being called redundantly in loadMoreVideos()
+   - Need to remove redundant preload calls and ensure single resource fetch per video
+
+2. Video Transform Issues:
+   - AVAssetTrack warnings about unrecognized "currentVideoTrack.preferredTransform" keys
+   - Current approach of loading .preferredTransform directly on track is incorrect
+   - Need to investigate proper AVAssetTrack property loading sequence
+
+Progress:
+- Successfully implemented single player initialization per video
+- Achieved stable video looping
+- Eliminated multiple buffering states
+- Implemented clean preloading sequence
+- Reduced memory footprint by limiting preloaded videos
+
+Next Steps:
+1. Remove redundant preloadVideosAround() calls
+2. Research and implement correct AVAssetTrack transform loading
+3. Verify resource cleanup on video transitions
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # AI Working Notes

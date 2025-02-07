@@ -9,6 +9,7 @@ class FeedVideoPlayerViewModel: ObservableObject {
     @Published private(set) var state = VideoState.loading
     @Published var showingControls = true
     @Published private(set) var hasUserReaction = false
+    @Published private(set) var isPlayerReady = false
     
     private let video: Video
     private(set) var player: AVPlayer?
@@ -17,9 +18,11 @@ class FeedVideoPlayerViewModel: ObservableObject {
     private var controlsTimer: Timer?
     private var statusObservation: AnyCancellable?
     private var bufferingObservation: AnyCancellable?
+    private var timeObservation: Any?
     
     enum VideoState: Equatable {
         case loading
+        case preparing
         case buffering
         case playing
         case paused
@@ -29,7 +32,7 @@ class FeedVideoPlayerViewModel: ObservableObject {
             switch self {
             case .playing, .paused, .buffering:
                 return true
-            case .loading, .failed:
+            case .loading, .preparing, .failed:
                 return false
             }
         }
@@ -38,24 +41,26 @@ class FeedVideoPlayerViewModel: ObservableObject {
     init(video: Video, player: AVPlayer?) {
         Log.p(Log.video, Log.start, "Initializing player view model for video: \(video.id)")
         self.video = video
-        setupPlayer(player)
-        checkUserReaction()
-        setupControlsTimer()
+        
+        if let player = player {
+            Log.p(Log.video, Log.event, "Received pre-initialized player for video: \(video.id)")
+            setupExistingPlayer(player)
+        } else {
+            Log.p(Log.video, Log.event, "No pre-initialized player for video: \(video.id)")
+            state = .failed("No player available")
+        }
     }
     
-    private func setupPlayer(_ player: AVPlayer?) {
-        guard let player = player else {
-            Log.p(Log.video, Log.event, Log.error, "Failed to initialize player - player was nil")
-            state = .failed("Failed to initialize player")
-            return
-        }
-        
-        self.player = player
+    private func setupExistingPlayer(_ player: AVPlayer) {
+        Log.p(Log.video, Log.event, "Setting up existing player for video: \(video.id)")
+        state = .preparing
         
         // Cancel any existing setup
         setupTask?.cancel()
         statusObservation?.cancel()
         bufferingObservation?.cancel()
+        
+        self.player = player
         
         setupTask = Task { @MainActor in
             guard let playerItem = player.currentItem else {
@@ -68,28 +73,6 @@ class FeedVideoPlayerViewModel: ObservableObject {
             player.automaticallyWaitsToMinimizeStalling = true
             
             do {
-                // Load and verify asset
-                let asset = playerItem.asset
-                try await asset.load(.isPlayable, .tracks)
-                
-                guard asset.isPlayable else {
-                    Log.p(Log.video, Log.event, Log.error, "Asset is not playable")
-                    state = .failed("Video cannot be played")
-                    return
-                }
-                
-                // Load video tracks
-                let tracks = try await asset.loadTracks(withMediaType: .video)
-                guard !tracks.isEmpty else {
-                    Log.p(Log.video, Log.event, Log.error, "No video tracks available")
-                    state = .failed("No video tracks available")
-                    return
-                }
-                
-                // Ensure first track is loaded
-                try await tracks[0].load(.timeRange)
-                Log.p(Log.video, Log.event, Log.success, "Video track loaded successfully")
-                
                 // Set up status observation first
                 statusObservation = playerItem.publisher(for: \.status)
                     .receive(on: DispatchQueue.main)
@@ -98,7 +81,8 @@ class FeedVideoPlayerViewModel: ObservableObject {
                         switch status {
                         case .readyToPlay:
                             Log.p(Log.video, Log.event, Log.success, "Player ready to play")
-                            if self.state == .loading {
+                            if self.state == .preparing {
+                                self.isPlayerReady = true
                                 self.state = .playing
                                 player.play()
                             }
@@ -119,22 +103,43 @@ class FeedVideoPlayerViewModel: ObservableObject {
                         if !isPlaybackLikelyToKeepUp && self.state.isPlayable {
                             Log.p(Log.video, Log.event, "Player entered buffering state")
                             self.state = .buffering
-                            player.pause()
+                            // Don't pause during buffering, let AVPlayer handle it
                         } else if isPlaybackLikelyToKeepUp && self.state == .buffering {
                             Log.p(Log.video, Log.event, "Player resumed from buffering")
                             self.state = .playing
-                            player.play()
+                            // Only play if we were previously playing
+                            if self.state == .playing {
+                                player.play()
+                            }
                         }
                     }
+                
+                // Add time observation to detect stalls
+                let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+                timeObservation = player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak self] time in
+                    guard let self = self else { return }
+                    // Log periodic time updates for debugging
+                    if self.state == .playing {
+                        Log.p(Log.video, Log.event, "Playback time: \(time.seconds)")
+                    }
+                }
                 
             } catch {
                 Log.p(Log.video, Log.event, Log.error, "Player setup failed: \(error.localizedDescription)")
                 state = .failed(error.localizedDescription)
             }
         }
+        
+        // Set up video completion notification
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(playerItemDidReachEnd),
+            name: .AVPlayerItemDidPlayToEndTime,
+            object: player.currentItem
+        )
     }
     
-    private func setupControlsTimer() {
+    func setupControlsTimer() {
         controlsTimer?.invalidate()
         controlsTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
             Task { @MainActor in
@@ -160,7 +165,7 @@ class FeedVideoPlayerViewModel: ObservableObject {
         }
     }
     
-    private func checkUserReaction() {
+    func checkUserReaction() {
         guard let userId = Auth.auth().currentUser?.uid else { return }
         
         Task {
@@ -209,11 +214,21 @@ class FeedVideoPlayerViewModel: ObservableObject {
         }
     }
     
+    @objc private func playerItemDidReachEnd() {
+        Log.p(Log.video, Log.event, "Video reached end, looping playback")
+        player?.seek(to: .zero)
+        player?.play()
+    }
+    
     deinit {
-        Log.p(Log.video, Log.exit, "FeedVideoPlayerViewModel deinit")
+        Log.p(Log.video, Log.exit, "FeedVideoPlayerViewModel deinit for video: \(video.id)")
+        NotificationCenter.default.removeObserver(self)
         setupTask?.cancel()
         statusObservation?.cancel()
         bufferingObservation?.cancel()
+        if let timeObservation = timeObservation {
+            player?.removeTimeObserver(timeObservation)
+        }
         controlsTimer?.invalidate()
         cancellables.removeAll()
         player?.pause()
@@ -236,42 +251,21 @@ struct FeedVideoPlayerView: View {
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                switch viewModel.state {
-                case .loading:
-                    ProgressView()
-                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
-                        .scaleEffect(1.5)
-                case .playing:
-                    if let player = viewModel.player {
+                // Always maintain a black background for visual continuity
+                Color.black
+                
+                // Content layer - only show player when it's fully ready
+                Group {
+                    if viewModel.isPlayerReady, let player = viewModel.player {
                         CustomVideoPlayer(player: player)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .edgesIgnoringSafeArea(.all)
                     }
-                case .failed(let error):
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .foregroundColor(.yellow)
-                            .font(.system(size: 40))
-                        Text("Unable to load video")
-                            .foregroundColor(.white)
-                            .font(.headline)
-                        Text(error)
-                            .foregroundColor(.white)
-                            .font(.subheadline)
-                    }
-                case .buffering:
-                    Text("Buffering...")
-                        .foregroundColor(.white)
-                        .font(.headline)
-                case .paused:
-                    Text("Paused")
-                        .foregroundColor(.white)
-                        .font(.headline)
+                    
+                    // Overlay layer - always present for visual continuity
+                    overlayContent
                 }
-                
-                if viewModel.showingControls {
-                    controlsOverlay
-                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color.black)
@@ -279,6 +273,47 @@ struct FeedVideoPlayerView: View {
                 withAnimation {
                     viewModel.showingControls.toggle()
                 }
+            }
+            .onAppear {
+                Log.p(Log.video, Log.event, "FeedVideoPlayerView appeared for video: \(video.id)")
+                viewModel.checkUserReaction()
+                viewModel.setupControlsTimer()
+            }
+            .onDisappear {
+                Log.p(Log.video, Log.event, "FeedVideoPlayerView disappeared for video: \(video.id)")
+            }
+        }
+    }
+    
+    @ViewBuilder
+    private var overlayContent: some View {
+        switch viewModel.state {
+        case .loading, .preparing:
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                .scaleEffect(1.5)
+        case .buffering:
+            // Show a more subtle loading indicator during buffering
+            ProgressView()
+                .progressViewStyle(CircularProgressViewStyle(tint: .white.opacity(0.7)))
+                .scaleEffect(1.0)
+        case .failed(let error):
+            VStack(spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundColor(.yellow)
+                    .font(.system(size: 40))
+                Text("Unable to load video")
+                    .foregroundColor(.white)
+                    .font(.headline)
+                Text(error)
+                    .foregroundColor(.white)
+                    .font(.subheadline)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal)
+            }
+        case .playing, .paused:
+            if viewModel.showingControls {
+                controlsOverlay
             }
         }
     }
