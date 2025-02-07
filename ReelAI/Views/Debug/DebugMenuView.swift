@@ -65,16 +65,29 @@ struct DebugMenuView: View {
                 }
                 .disabled(viewModel.isAuditing)
                 
-                if viewModel.auditStats.totalVideosChecked > 0 {
+                if viewModel.auditStats.totalVideosChecked > 0 || viewModel.auditStats.totalUsersChecked > 0 || viewModel.auditStats.totalUsernamesChecked > 0 {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Audit Statistics")
                             .font(.headline)
-                        Group {
-                            StatRow(label: "Videos", valid: viewModel.auditStats.validVideos, total: viewModel.auditStats.totalVideosChecked)
-                            StatRow(label: "Storage Files", valid: viewModel.auditStats.validStorageFiles, total: viewModel.auditStats.totalStorageFilesChecked)
-                            StatRow(label: "Reactions", valid: viewModel.auditStats.validReactions, total: viewModel.auditStats.totalReactionsChecked)
-                        }
-                        .font(.caption)
+                        Text("Users: \(viewModel.auditStats.validUsers)/\(viewModel.auditStats.totalUsersChecked) valid")
+                            .font(.caption)
+                        Text("Usernames: \(viewModel.auditStats.validUsernames)/\(viewModel.auditStats.totalUsernamesChecked) valid")
+                            .font(.caption)
+                        Text("Videos: \(viewModel.auditStats.validVideos)/\(viewModel.auditStats.totalVideosChecked) valid")
+                            .font(.caption)
+                        Text("Total Storage Files: \(viewModel.auditStats.totalStorageFilesChecked)")
+                            .font(.caption)
+                        Text("Valid Storage Files: \(viewModel.auditStats.validStorageFiles)")
+                            .font(.caption)
+                            .foregroundColor(viewModel.auditStats.validStorageFiles == viewModel.auditStats.totalStorageFilesChecked ? .green : .orange)
+                        Text("Reactions: \(viewModel.auditStats.validReactions)/\(viewModel.auditStats.totalReactionsChecked) valid")
+                            .font(.caption)
+                        Text("Duplicate Videos: \(viewModel.auditStats.duplicateVideosFound)")
+                            .font(.caption)
+                            .foregroundColor(.orange)
+                        Text("Unreferenced Storage Files: \(viewModel.auditStats.unreferencedStorageFiles)")
+                            .font(.caption)
+                            .foregroundColor(.orange)
                     }
                     .padding(.vertical, 8)
                 }
@@ -152,6 +165,8 @@ class DebugViewModel: ObservableObject {
         var validUsers = 0
         var totalUsernamesChecked = 0
         var validUsernames = 0
+        var duplicateVideosFound = 0
+        var unreferencedStorageFiles = 0
     }
     
     struct AuditResult: Identifiable {
@@ -171,6 +186,8 @@ class DebugViewModel: ObservableObject {
             case invalidUser
             case orphanedUsername
             case invalidUsername
+            case duplicateVideo
+            case unreferencedStorageFile
         }
     }
     
@@ -182,6 +199,12 @@ class DebugViewModel: ObservableObject {
         
         Task {
             do {
+                // Track video IDs to check for duplicates
+                var videoIdMap: [String: [String]] = [:] // videoId -> [documentId]
+                
+                // Track all valid video paths for storage comparison
+                var validVideoPaths = Set<String>()
+                
                 // 1. Audit Users collection
                 let usersSnapshot = try await db.collection("users").getDocuments()
                 auditStats.totalUsersChecked = usersSnapshot.documents.count
@@ -275,11 +298,18 @@ class DebugViewModel: ObservableObject {
                     }
                 }
                 
-                // 3. Audit Firestore videos
+                // 3. Audit Firestore videos and check for duplicates
                 let videosSnapshot = try await db.collection("videos").getDocuments()
                 auditStats.totalVideosChecked = videosSnapshot.documents.count
                 for doc in videosSnapshot.documents {
                     if let video = try? doc.data(as: Video.self) {
+                        // Add to videoId map to track duplicates
+                        videoIdMap[video.id, default: []].append(doc.documentID)
+                        
+                        // Store valid video path
+                        let videoPath = "videos/\(video.ownerId)/\(doc.documentID).mp4"
+                        validVideoPaths.insert(videoPath)
+                        
                         // Check if video file exists in Storage
                         let videoRef = storage.reference().child("videos/\(video.ownerId)/\(doc.documentID).mp4")
                         do {
@@ -288,11 +318,20 @@ class DebugViewModel: ObservableObject {
                             let userDoc = try? await db.collection("users").document(video.ownerId).getDocument()
                             if userDoc != nil && userDoc!.exists {
                                 auditStats.validVideos += 1
+                                Log.p(Log.debug_audit, Log.verify, Log.success, "Valid video found: \(doc.documentID)")
+                            } else {
+                                await addResult(
+                                    title: "Invalid Video Owner",
+                                    description: "Video \(doc.documentID) references non-existent user \(video.ownerId)",
+                                    type: .invalidVideo,
+                                    canDelete: true,
+                                    path: "videos/\(doc.documentID)"
+                                )
                             }
                         } catch {
                             await addResult(
                                 title: "Orphaned Video Document",
-                                description: "Video \(doc.documentID) has no corresponding file in Storage",
+                                description: "Video \(doc.documentID) has no corresponding file in Storage at path: videos/\(video.ownerId)/\(doc.documentID).mp4",
                                 type: .orphanedVideo,
                                 canDelete: true,
                                 path: "videos/\(doc.documentID)"
@@ -309,18 +348,65 @@ class DebugViewModel: ObservableObject {
                     }
                 }
                 
-                // 4. Audit Storage files
-                let storageRef = storage.reference().child("videos")
-                let userFolders = try await storageRef.listAll()
+                // Check for duplicate video documents
+                for (videoId, documents) in videoIdMap {
+                    if documents.count > 1 {
+                        auditStats.duplicateVideosFound += 1
+                        // Report all but the first document as duplicates
+                        for docId in documents.dropFirst() {
+                            await addResult(
+                                title: "Duplicate Video Document",
+                                description: "Video ID \(videoId) is referenced by multiple documents. This is document \(docId)",
+                                type: .duplicateVideo,
+                                canDelete: true,
+                                path: "videos/\(docId)"
+                            )
+                        }
+                    }
+                }
                 
-                for userFolder in userFolders.prefixes {
+                // 4. Audit Storage files and check for unreferenced files
+                let storageRef = storage.reference().child("videos")
+                
+                // First, list all items at the root of 'videos' directory
+                let rootList = try await storageRef.listAll()
+                // Count any files directly in the 'videos' folder
+                auditStats.totalStorageFilesChecked += rootList.items.count
+                for item in rootList.items {
+                    let videoPath = "videos/\(item.name)"
+                    // Check if file follows naming convention
+                    if !item.name.hasSuffix(".mp4") {
+                        await addResult(
+                            title: "Invalid File Format",
+                            description: "File \(item.name) in videos/ folder is not .mp4",
+                            type: .invalidStoragePath,
+                            canDelete: true,
+                            path: "storage/\(videoPath)"
+                        )
+                        continue
+                    }
+                    // Check if file is referenced by a Firestore document
+                    if validVideoPaths.contains(videoPath) {
+                        auditStats.validStorageFiles += 1
+                    } else {
+                        auditStats.unreferencedStorageFiles += 1
+                        await addResult(
+                            title: "Unreferenced Storage File",
+                            description: "File \(item.name) in videos/ folder has no corresponding Firestore document",
+                            type: .unreferencedStorageFile,
+                            canDelete: true,
+                            path: "storage/\(videoPath)"
+                        )
+                    }
+                }
+                
+                // Then, process all user folders under 'videos'
+                for userFolder in rootList.prefixes {
                     let userId = userFolder.name
                     let userFiles = try await userFolder.listAll()
                     auditStats.totalStorageFilesChecked += userFiles.items.count
-                    
                     for item in userFiles.items {
-                        let videoId = item.name.replacingOccurrences(of: ".mp4", with: "")
-                        
+                        let videoPath = "videos/\(userId)/\(item.name)"
                         // Check if file follows naming convention
                         if !item.name.hasSuffix(".mp4") {
                             await addResult(
@@ -328,22 +414,21 @@ class DebugViewModel: ObservableObject {
                                 description: "File \(item.name) in user \(userId) folder is not .mp4",
                                 type: .invalidStoragePath,
                                 canDelete: true,
-                                path: "storage/videos/\(userId)/\(item.name)"
+                                path: "storage/\(videoPath)"
                             )
                             continue
                         }
-                        
-                        // Check if corresponding Firestore document exists
-                        let videoDoc = try? await db.collection("videos").document(videoId).getDocument()
-                        if videoDoc != nil && videoDoc!.exists {
+                        // Check if file is referenced by a Firestore document
+                        if validVideoPaths.contains(videoPath) {
                             auditStats.validStorageFiles += 1
                         } else {
+                            auditStats.unreferencedStorageFiles += 1
                             await addResult(
-                                title: "Orphaned Storage File",
-                                description: "File \(item.name) has no corresponding Firestore document",
-                                type: .orphanedStorageFile,
+                                title: "Unreferenced Storage File",
+                                description: "File \(item.name) in user \(userId) folder has no corresponding Firestore document",
+                                type: .unreferencedStorageFile,
                                 canDelete: true,
-                                path: "storage/videos/\(userId)/\(item.name)"
+                                path: "storage/\(videoPath)"
                             )
                         }
                     }
@@ -378,6 +463,8 @@ class DebugViewModel: ObservableObject {
                         Videos: \(auditStats.validVideos)/\(auditStats.totalVideosChecked) valid
                         Storage Files: \(auditStats.validStorageFiles)/\(auditStats.totalStorageFilesChecked) valid
                         Reactions: \(auditStats.validReactions)/\(auditStats.totalReactionsChecked) valid
+                        Duplicate Videos Found: \(auditStats.duplicateVideosFound)
+                        Unreferenced Storage Files: \(auditStats.unreferencedStorageFiles)
                         Total Issues: \(auditResults.count)
                         """)
                 }
@@ -408,10 +495,10 @@ class DebugViewModel: ObservableObject {
         Task {
             do {
                 switch result.type {
-                case .orphanedVideo, .invalidVideo:
+                case .orphanedVideo, .invalidVideo, .duplicateVideo:
                     try await db.document(result.path).delete()
                     
-                case .orphanedStorageFile, .invalidStoragePath:
+                case .orphanedStorageFile, .invalidStoragePath, .unreferencedStorageFile:
                     let ref = storage.reference().child(result.path.replacingOccurrences(of: "storage/", with: ""))
                     try await ref.delete()
                     
