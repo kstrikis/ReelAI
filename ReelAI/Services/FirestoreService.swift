@@ -8,12 +8,16 @@ import FirebaseAuth
 final class FirestoreService {
     static let shared = FirestoreService()
     private let db: Firestore
+    private let authService: AuthenticationService
     
     private init() {
         Log.p(Log.firebase, Log.start, "Initializing FirestoreService")
         
         // Initialize Firestore
         db = Firestore.firestore()
+        
+        // Initialize auth service reference
+        authService = AuthenticationService()
         
         // Log configuration details
         Log.p(Log.firebase, Log.event, "Firestore Configuration:")
@@ -37,21 +41,40 @@ final class FirestoreService {
     func createUserProfile(_ profile: UserProfile, userId: String) -> AnyPublisher<Void, Error> {
         Log.p(Log.firebase, Log.save, "Creating new user profile for \(userId)")
         
+        // First reserve the username
         return Future<Void, Error> { promise in
-            do {
-                let data = try profile.asDictionary()
-                self.db.collection("users").document(userId).setData(data) { error in
-                    if let error = error {
-                        Log.p(Log.firebase, Log.save, Log.error, "Failed to create user profile: \(error.localizedDescription)")
+            self.db.collection("usernames").document(profile.username).setData([
+                "userId": userId,
+                "createdAt": FieldValue.serverTimestamp()
+            ]) { error in
+                if let error = error {
+                    Log.p(Log.firebase, Log.save, Log.error, "Failed to reserve username: \(error.localizedDescription)")
+                    promise(.failure(error))
+                    return
+                }
+                
+                // Then create the user profile
+                do {
+                    let data = try profile.asDictionary()
+                    self.db.collection("users").document(userId).setData(data) { error in
+                        if let error = error {
+                            // If profile creation fails, clean up the username reservation
+                            self.db.collection("usernames").document(profile.username).delete { _ in
+                                Log.p(Log.firebase, Log.save, Log.error, "Failed to create user profile: \(error.localizedDescription)")
+                                promise(.failure(error))
+                            }
+                        } else {
+                            Log.p(Log.firebase, Log.save, Log.success, "Created user profile for \(userId)")
+                            promise(.success(()))
+                        }
+                    }
+                } catch {
+                    // If profile encoding fails, clean up the username reservation
+                    self.db.collection("usernames").document(profile.username).delete { _ in
+                        Log.p(Log.firebase, Log.save, Log.error, "Failed to encode user profile: \(error.localizedDescription)")
                         promise(.failure(error))
-                    } else {
-                        Log.p(Log.firebase, Log.save, Log.success, "Created user profile for \(userId)")
-                        promise(.success(()))
                     }
                 }
-            } catch {
-                Log.p(Log.firebase, Log.save, Log.error, "Failed to encode user profile: \(error.localizedDescription)")
-                promise(.failure(error))
             }
         }.eraseToAnyPublisher()
     }
@@ -59,23 +82,17 @@ final class FirestoreService {
     func updateUserProfile(_ profile: UserProfile, userId: String) -> AnyPublisher<Void, Error> {
         Log.p(Log.firebase, Log.update, "Updating user profile for \(userId)")
         
-        return Future<Void, Error> { promise in
-            do {
-                let data = try profile.asDictionary()
-                self.db.collection("users").document(userId).setData(data, merge: true) { error in
-                    if let error = error {
-                        Log.p(Log.firebase, Log.update, Log.error, "Failed to update user profile: \(error.localizedDescription)")
-                        promise(.failure(error))
-                    } else {
-                        Log.p(Log.firebase, Log.update, Log.success, "Updated user profile for \(userId)")
-                        promise(.success(()))
-                    }
+        // Use the shared authService instance
+        return authService.updateProfile(profile)
+            .handleEvents(receiveCompletion: { completion in
+                switch completion {
+                case .finished:
+                    Log.p(Log.firebase, Log.update, Log.success, "Updated user profile for \(userId)")
+                case .failure(let error):
+                    Log.p(Log.firebase, Log.update, Log.error, "Failed to update user profile: \(error.localizedDescription)")
                 }
-            } catch {
-                Log.p(Log.firebase, Log.update, Log.error, "Failed to encode user profile update: \(error.localizedDescription)")
-                promise(.failure(error))
-            }
-        }.eraseToAnyPublisher()
+            })
+            .eraseToAnyPublisher()
     }
     
     func getUserProfile(userId: String) -> AnyPublisher<UserProfile?, Error> {

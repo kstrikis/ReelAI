@@ -173,10 +173,17 @@ Key security considerations:
 We'll use Firebase Storage to hold the actual media files referenced in our Firestore documents.
 
 • Organization in Storage should be clear and maintainable:
-  – /users/{uid}/profileImage.jpg  
-  – /videos/{videoId}/raw.mp4  
-  – /videos/{videoId}/edited.mp4  
-  – Future additions, such as AI-generated images or audio clips, could fit under similar directories (e.g., /videos/{videoId}/aiImages/...).
+  – /users/{uid}/profileImage.jpg
+  – /videos/{userId}/{videoId}.mp4
+  – Future additions, such as AI-generated content, should follow the user-based structure:
+    • /videos/{userId}/ai/{videoId}/audio.mp3
+    • /videos/{userId}/ai/{videoId}/images/...
+
+• Key points about video storage:
+  – Videos are organized by user ID first, then video ID
+  – This structure allows for easy user-based queries and cleanup
+  – Each video has a unique ID that's shared between Firestore and Storage
+  – The computed URL in the Video model matches this structure
 
 ──────────────────────────────────────────────
 6. Naming Conventions in Swift & Firestore
@@ -217,6 +224,71 @@ Summary
 By using Firebase Auth, Firestore, and Firebase Storage together, we'll create a fast, scalable MVP that lets users log in (with a demo option), create videos from various media components, and interact with content in real time. Our data model uses clean naming conventions and a modular structure that is easy to extend as more advanced AI features are added.
 
 This approach meets our immediate need to demonstrate a meme video creation tool while laying the groundwork for future enhancements.
+
+──────────────────────────────────────────────
+6. Video Publishing Flow
+──────────────────────────────────────────────
+The video publishing process follows these steps:
+
+1. Video Selection & Processing:
+   – User selects video through PhotosPicker
+   – System creates a temporary file in app's sandbox
+   – Video is loaded through Photos framework for preview
+   – A unique videoId is generated for both Storage and Firestore
+
+2. Upload Process:
+   – VideoUploadService verifies file stability with retries
+   – Uploads to Firebase Storage at /videos/{userId}/{videoId}.mp4
+   – Progress updates are provided through Combine publishers
+   – Metadata includes content type and file size
+
+3. State Management:
+   – PublishingView tracks upload state and progress
+   – Provides user feedback through progress updates
+   – Handles errors and success states
+   – Cleans up temporary files after upload
+
+4. Key Implementation Notes:
+   – Uses Swift's PhotosPicker for video selection
+   – Implements retry logic for file size verification
+   – Provides progress updates through Combine
+   – Handles cleanup of temporary files
+   – Maintains consistent videoId between Storage and Firestore
+
+──────────────────────────────────────────────
+7. Firebase Data Audit Tool
+──────────────────────────────────────────────
+A debug tool has been implemented to maintain data integrity across Firebase services.
+
+• Audit Checks:
+  – Firestore video documents without Storage files
+  – Invalid video documents (decode failures, missing users)
+  – Storage files without Firestore documents
+  – Files not following .mp4 format
+  – Orphaned reactions
+  – Path structure violations
+
+• Tool Features:
+  – One-click audit initiation
+  – Progress tracking during audit
+  – Detailed issue descriptions
+  – Safe deletion of problematic items
+  – Comprehensive logging
+  – Results clearing
+
+• Implementation Notes:
+  – Located in DebugMenuView for development builds only
+  – Uses async/await for efficient Firebase operations
+  – Maintains atomic operations for deletions
+  – Provides clear error messages and paths
+  – Follows established logging standards
+
+• Usage Guidelines:
+  – Run periodically to catch data inconsistencies
+  – Review issues before deletion
+  – Check logs for operation details
+  – Clear results after review
+  – Use during development and testing phases
 
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 

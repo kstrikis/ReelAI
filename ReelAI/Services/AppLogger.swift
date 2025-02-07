@@ -358,6 +358,50 @@ extension Log {
     static let audio_music = AudioContext.music
     static let audio_effects = AudioContext.effects
     static let audio_mixing = AudioContext.mixing
+    
+    // Debug Features
+    enum DebugContext: Log.Context {
+        case debug, audit, cleanup
+        
+        var emoji: String {
+            switch self {
+            case .debug: return "🛠️"
+            case .audit: return "🔍"
+            case .cleanup: return "🧹"
+            }
+        }
+        
+        var name: String { String(describing: self) }
+    }
+    
+    static let debug = DebugContext.debug
+    static let debug_audit = DebugContext.audit
+    static let debug_cleanup = DebugContext.cleanup
+    
+    // Debug Actions
+    enum DebugAction: Log.Action {
+        case scan, verify, clean, analyze, repair, validate
+        
+        var emoji: String {
+            switch self {
+            case .scan: return "🔎"
+            case .verify: return "✅"
+            case .clean: return "🧹"
+            case .analyze: return "📊"
+            case .repair: return "🔧"
+            case .validate: return "🎯"
+            }
+        }
+        
+        var name: String { String(describing: self) }
+    }
+    
+    static let scan = DebugAction.scan
+    static let verify = DebugAction.verify
+    static let clean = DebugAction.clean
+    static let analyze = DebugAction.analyze
+    static let repair = DebugAction.repair
+    static let validate = DebugAction.validate
 }
 
 // Example of how to extend with new contexts:

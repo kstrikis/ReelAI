@@ -236,12 +236,30 @@ final class AuthenticationService: ObservableObject {
                     )).eraseToAnyPublisher()
                 }
                 
-                // Username is available, reserve it and update profile
-                return self.reserveUsername(profile.username)
-                    .flatMap { _ in
-                        self.updateProfileInFirestore(profile, userId: userId)
-                    }
-                    .eraseToAnyPublisher()
+                // Username is available, handle the update process
+                if let currentProfile = self.userProfile,
+                   currentProfile.username != profile.username {
+                    // Delete old username document first
+                    return self.database.collection("usernames")
+                        .document(currentProfile.username)
+                        .delete()
+                        .flatMap { _ -> AnyPublisher<Void, Error> in
+                            // Then reserve new username and update profile
+                            return self.reserveUsername(profile.username)
+                                .flatMap { _ in
+                                    self.updateProfileInFirestore(profile, userId: userId)
+                                }
+                                .eraseToAnyPublisher()
+                        }
+                        .eraseToAnyPublisher()
+                } else {
+                    // No username change or no previous username, just reserve and update
+                    return self.reserveUsername(profile.username)
+                        .flatMap { _ in
+                            self.updateProfileInFirestore(profile, userId: userId)
+                        }
+                        .eraseToAnyPublisher()
+                }
             }
             .eraseToAnyPublisher()
     }

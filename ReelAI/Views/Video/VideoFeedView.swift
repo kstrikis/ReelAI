@@ -37,22 +37,68 @@ struct VideoFeedView: View {
                         .foregroundColor(.blue)
                         .padding(.top, 8)
                     }
+                } else if !viewModel.isFirstVideoReady {
+                    // Show loading state until first video is ready
+                    VStack(spacing: 12) {
+                        ProgressView()
+                            .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                        Text("Preparing video playback...")
+                            .foregroundColor(.white)
+                            .font(.caption)
+                    }
                 } else {
                     TabView(selection: $viewModel.currentIndex) {
-                        ForEach(viewModel.videos.indices, id: \.self) { index in
-                            FeedVideoPlayerView(
-                                video: viewModel.videos[index],
-                                player: viewModel.getPlayer(for: viewModel.videos[index]),
-                                size: geometry.size
-                            )
-                            .rotationEffect(.degrees(90))
-                            .tag(index)
+                        ForEach(0..<(viewModel.videos.count + 1), id: \.self) { index in
+                            if index == viewModel.videos.count {
+                                // Dummy page: duplicate of the first video
+                                if let firstVideo = viewModel.videos.first, let player = viewModel.getPlayer(for: firstVideo) {
+                                    FeedVideoPlayerView(
+                                        video: firstVideo,
+                                        player: player,
+                                        size: geometry.size
+                                    )
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                                    .rotationEffect(.degrees(90))
+                                    .tag(index)
+                                    .onAppear {
+                                        Log.p(Log.video, Log.event, "Reached dummy page, resetting feed to beginning")
+                                        DispatchQueue.main.async {
+                                            viewModel.currentIndex = 0
+                                        }
+                                    }
+                                } else {
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .frame(width: geometry.size.width, height: geometry.size.height)
+                                        .rotationEffect(.degrees(90))
+                                        .tag(index)
+                                }
+                            } else {
+                                if let player = viewModel.getPlayer(for: viewModel.videos[index]) {
+                                    FeedVideoPlayerView(
+                                        video: viewModel.videos[index],
+                                        player: player,
+                                        size: geometry.size
+                                    )
+                                    .frame(width: geometry.size.width, height: geometry.size.height)
+                                    .rotationEffect(.degrees(90))
+                                    .tag(index)
+                                } else {
+                                    // Show loading placeholder until player is ready
+                                    ProgressView()
+                                        .progressViewStyle(CircularProgressViewStyle(tint: .white))
+                                        .frame(width: geometry.size.width, height: geometry.size.height)
+                                        .rotationEffect(.degrees(90))
+                                        .tag(index)
+                                }
+                            }
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
                     .frame(width: geometry.size.height, height: geometry.size.width)
                     .rotationEffect(.degrees(-90))
                     .frame(width: geometry.size.width, height: geometry.size.height)
+                    .edgesIgnoringSafeArea(.all)  // Ensure full screen coverage
                     .onChange(of: viewModel.currentIndex) { newIndex in
                         Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
                         viewModel.handleIndexChange(newIndex)
@@ -74,11 +120,11 @@ class VideoFeedViewModel: ObservableObject {
     @Published private(set) var videos: [Video] = []
     @Published var currentIndex = 0
     @Published var isLoading = false
+    @Published var isFirstVideoReady = false
     
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var cancellables = Set<AnyCancellable>()
-    private let preloadWindow = 1 // Number of videos to preload in each direction
-    
+    private let preloadWindow = 4  // Increased from 3 to 4 to allow more aggressive preloading on fast swipes
     private let db = Firestore.firestore()
     private var lastDocumentSnapshot: DocumentSnapshot?
     private let batchSize = 10
@@ -90,8 +136,12 @@ class VideoFeedViewModel: ObservableObject {
     
     func handleIndexChange(_ newIndex: Int) {
         Log.p(Log.video, Log.event, "Feed index changed to \(newIndex)")
+        
+        // Clean up players that are no longer needed
+        cleanupInactivePlayers(around: newIndex)
+        
         // If we're getting close to the end, load more videos
-        if newIndex >= videos.count - 3 {
+        if newIndex >= videos.count - preloadWindow {
             loadMoreVideos()
         }
         
@@ -107,6 +157,7 @@ class VideoFeedViewModel: ObservableObject {
         Log.p(Log.firebase, Log.read, "Loading initial batch of videos")
         isLoading = true
         videos = [] // Clear existing videos when reloading
+        isFirstVideoReady = false // Reset first video ready state
         
         db.collection("videos")
             .order(by: "createdAt", descending: true)
@@ -150,7 +201,7 @@ class VideoFeedViewModel: ObservableObject {
                 
                 Log.p(Log.video, Log.event, "Loaded initial \(videos.count) videos")
                 
-                // Preload first few videos
+                // Preload first few videos and set isFirstVideoReady when the first one is ready
                 if !videos.isEmpty {
                     self.preloadVideosAround(index: 0)
                 }
@@ -214,9 +265,11 @@ class VideoFeedViewModel: ObservableObject {
         let start = max(0, index - preloadWindow)
         let end = min(videos.count - 1, index + preloadWindow)
         
-        // Don't clear preloaded videos immediately
-        // Instead, keep a buffer of videos around the current index
-        let activeIndices = Set(start...end)
+        // Keep a slightly larger buffer to prevent thrashing
+        let bufferWindow = preloadWindow + 1
+        let bufferStart = max(0, index - bufferWindow)
+        let bufferEnd = min(videos.count - 1, index + bufferWindow)
+        let activeIndices = Set(bufferStart...bufferEnd)
         let activeVideoIds = activeIndices.map { videos[$0].id }
         
         // Only remove players that are far from current index
@@ -264,7 +317,7 @@ class VideoFeedViewModel: ObservableObject {
                 
                 // Create player item with specific configuration
                 let playerItem = AVPlayerItem(asset: asset)
-                playerItem.preferredForwardBufferDuration = 2.0
+                playerItem.preferredForwardBufferDuration = 5.0  // Increased buffer
                 
                 // Create player with specific configuration
                 let player = AVPlayer(playerItem: playerItem)
@@ -273,8 +326,20 @@ class VideoFeedViewModel: ObservableObject {
                 
                 // Set up player
                 await MainActor.run {
+                    // Clean up old player if it exists
+                    if let oldPlayer = preloadedPlayers[video.id] {
+                        oldPlayer.pause()
+                        oldPlayer.replaceCurrentItem(with: nil)
+                    }
+                    
                     preloadedPlayers[video.id] = player
                     Log.p(Log.video, Log.event, Log.success, "Successfully preloaded video: \(video.id)")
+                    
+                    // If this is the first video and it's now ready, update the state
+                    if !isFirstVideoReady && video.id == videos.first?.id {
+                        isFirstVideoReady = true
+                        Log.p(Log.video, Log.event, Log.success, "First video is ready for playback")
+                    }
                 }
             } catch {
                 Log.p(Log.video, Log.event, Log.error, "Failed to preload video: \(error.localizedDescription)")
@@ -282,6 +347,27 @@ class VideoFeedViewModel: ObservableObject {
                 await MainActor.run {
                     preloadedPlayers[video.id] = nil
                 }
+            }
+        }
+    }
+    
+    private func cleanupPlayer(for videoId: String) {
+        if let player = preloadedPlayers[videoId] {
+            player.pause()
+            player.replaceCurrentItem(with: nil)
+            preloadedPlayers[videoId] = nil
+            Log.p(Log.video, Log.event, "Cleaned up player for video: \(videoId)")
+        }
+    }
+    
+    private func cleanupInactivePlayers(around index: Int) {
+        let activeIndices = Set((max(0, index - preloadWindow)...min(videos.count - 1, index + preloadWindow)))
+        let activeVideoIds = Set(activeIndices.map { videos[$0].id })
+        
+        // Cleanup players that are no longer needed
+        for (videoId, _) in preloadedPlayers {
+            if !activeVideoIds.contains(videoId) {
+                cleanupPlayer(for: videoId)
             }
         }
     }
