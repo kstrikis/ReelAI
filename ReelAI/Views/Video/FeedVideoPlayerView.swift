@@ -19,6 +19,7 @@ class FeedVideoPlayerViewModel: ObservableObject {
     private var statusObservation: AnyCancellable?
     private var bufferingObservation: AnyCancellable?
     private var timeObservation: Any?
+    private var waitForPlayerTask: Task<Void, Never>?
     
     enum VideoState: Equatable {
         case loading
@@ -46,8 +47,37 @@ class FeedVideoPlayerViewModel: ObservableObject {
             Log.p(Log.video, Log.event, "Received pre-initialized player for video: \(video.id)")
             setupExistingPlayer(player)
         } else {
-            Log.p(Log.video, Log.event, "No pre-initialized player for video: \(video.id)")
-            state = .failed("No player available")
+            Log.p(Log.video, Log.event, "No player available yet for video: \(video.id)")
+            state = .loading
+            // Start waiting for player
+            waitForPlayer()
+        }
+    }
+    
+    private func waitForPlayer() {
+        // Cancel any existing wait task
+        waitForPlayerTask?.cancel()
+        
+        waitForPlayerTask = Task { @MainActor in
+            // Wait up to 10 seconds for the player to become available
+            for _ in 0..<20 {
+                if Task.isCancelled { return }
+                
+                // Check if player is now available
+                if let player = VideoFeedViewModel.shared?.getPlayer(for: video) {
+                    Log.p(Log.video, Log.event, "Player became available for video: \(video.id)")
+                    setupExistingPlayer(player)
+                    return
+                }
+                
+                try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
+            }
+            
+            // If we get here, player didn't become available in time
+            if state == .loading {
+                Log.p(Log.video, Log.event, Log.error, "Timed out waiting for player: \(video.id)")
+                state = .failed("Video player unavailable")
+            }
         }
     }
     
@@ -220,6 +250,24 @@ class FeedVideoPlayerViewModel: ObservableObject {
         player?.play()
     }
     
+    func updatePlayer(_ newPlayer: AVPlayer?) {
+        Log.p(Log.video, Log.event, "Updating player for video: \(video.id)")
+        
+        // Clean up existing player
+        statusObservation?.cancel()
+        bufferingObservation?.cancel()
+        if let timeObservation = timeObservation {
+            player?.removeTimeObserver(timeObservation)
+        }
+        
+        if let newPlayer = newPlayer {
+            setupExistingPlayer(newPlayer)
+        } else {
+            state = .loading
+            player = nil
+        }
+    }
+    
     deinit {
         Log.p(Log.video, Log.exit, "FeedVideoPlayerViewModel deinit for video: \(video.id)")
         NotificationCenter.default.removeObserver(self)
@@ -240,12 +288,14 @@ class FeedVideoPlayerViewModel: ObservableObject {
 struct FeedVideoPlayerView: View {
     let video: Video
     let size: CGSize
-    @StateObject private var viewModel: FeedVideoPlayerViewModel
+    @StateObject private var viewModel: VideoSubscriberViewModel
+    @StateObject private var playerController: FeedVideoPlayerViewModel
     
     init(video: Video, player: AVPlayer?, size: CGSize) {
         self.video = video
         self.size = size
-        _viewModel = StateObject(wrappedValue: FeedVideoPlayerViewModel(video: video, player: player))
+        _viewModel = StateObject(wrappedValue: VideoSubscriberViewModel(video: video))
+        _playerController = StateObject(wrappedValue: FeedVideoPlayerViewModel(video: video, player: nil))
     }
     
     var body: some View {
@@ -256,7 +306,7 @@ struct FeedVideoPlayerView: View {
                 
                 // Content layer - only show player when it's fully ready
                 Group {
-                    if viewModel.isPlayerReady, let player = viewModel.player {
+                    if viewModel.state == .ready, let player = viewModel.player {
                         CustomVideoPlayer(player: player)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                             .edgesIgnoringSafeArea(.all)
@@ -271,16 +321,20 @@ struct FeedVideoPlayerView: View {
             .background(Color.black)
             .onTapGesture {
                 withAnimation {
-                    viewModel.showingControls.toggle()
+                    playerController.showingControls.toggle()
                 }
             }
             .onAppear {
                 Log.p(Log.video, Log.event, "FeedVideoPlayerView appeared for video: \(video.id)")
-                viewModel.checkUserReaction()
-                viewModel.setupControlsTimer()
+                playerController.checkUserReaction()
+                playerController.setupControlsTimer()
             }
             .onDisappear {
                 Log.p(Log.video, Log.event, "FeedVideoPlayerView disappeared for video: \(video.id)")
+            }
+            .onChange(of: viewModel.player) { newPlayer in
+                Log.p(Log.video, Log.event, "Updating player controller with new player for video: \(video.id)")
+                playerController.updatePlayer(newPlayer)
             }
         }
     }
@@ -288,15 +342,14 @@ struct FeedVideoPlayerView: View {
     @ViewBuilder
     private var overlayContent: some View {
         switch viewModel.state {
-        case .loading, .preparing:
+        case .loading:
             ProgressView()
                 .progressViewStyle(CircularProgressViewStyle(tint: .white))
                 .scaleEffect(1.5)
-        case .buffering:
-            // Show a more subtle loading indicator during buffering
-            ProgressView()
-                .progressViewStyle(CircularProgressViewStyle(tint: .white.opacity(0.7)))
-                .scaleEffect(1.0)
+        case .ready:
+            if playerController.showingControls {
+                controlsOverlay
+            }
         case .failed(let error):
             VStack(spacing: 12) {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -310,10 +363,6 @@ struct FeedVideoPlayerView: View {
                     .font(.subheadline)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal)
-            }
-        case .playing, .paused:
-            if viewModel.showingControls {
-                controlsOverlay
             }
         }
     }
@@ -337,24 +386,24 @@ struct FeedVideoPlayerView: View {
             
             HStack {
                 Button(action: {
-                    viewModel.togglePlayback()
+                    playerController.togglePlayback()
                 }) {
-                    Image(systemName: viewModel.state == .playing ? "pause.circle.fill" : "play.circle.fill")
+                    Image(systemName: playerController.state == .playing ? "pause.circle.fill" : "play.circle.fill")
                         .font(.title)
                         .foregroundColor(.white)
                 }
                 
                 Spacer()
                 
-                if !viewModel.hasUserReaction {
+                if !playerController.hasUserReaction {
                     HStack(spacing: 20) {
-                        Button(action: { viewModel.handleReaction(isLike: true) }) {
+                        Button(action: { playerController.handleReaction(isLike: true) }) {
                             Image(systemName: "hand.thumbsup")
                                 .font(.title2)
                                 .foregroundColor(.white)
                         }
                         
-                        Button(action: { viewModel.handleReaction(isLike: false) }) {
+                        Button(action: { playerController.handleReaction(isLike: false) }) {
                             Image(systemName: "hand.thumbsdown")
                                 .font(.title2)
                                 .foregroundColor(.white)

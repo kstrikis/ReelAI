@@ -82,22 +82,46 @@ struct VideoFeedView: View {
 }
 
 class VideoFeedViewModel: ObservableObject {
+    static weak var shared: VideoFeedViewModel?
+    
     @Published private(set) var videos: [Video] = []
     @Published var currentIndex = 0
     @Published var isLoading = false
     @Published var isFirstVideoReady = false
     
     private var preloadedPlayers: [String: AVPlayer] = [:]
+    private var playerSubjects: [String: CurrentValueSubject<AVPlayer?, Never>] = [:]
     private var cancellables = Set<AnyCancellable>()
-    private let preloadWindow = 2  // Reduced to 2 to minimize resource usage
+    private let preloadWindow = 2
     private let db = Firestore.firestore()
     private var lastDocumentSnapshot: DocumentSnapshot?
-    private let batchSize = 5  // Reduced batch size for faster initial load
-    private var preloadTasks: [String: Task<Void, Never>] = [:]  // Track preload tasks
+    private let batchSize = 5
+    private var preloadTasks: [String: Task<Void, Never>] = [:]
     
     init() {
         Log.p(Log.video, Log.start, "Initializing video feed")
+        VideoFeedViewModel.shared = self
         loadInitialVideos()
+    }
+    
+    deinit {
+        Log.p(Log.video, Log.exit, "VideoFeedViewModel deinit")
+        if VideoFeedViewModel.shared === self {
+            VideoFeedViewModel.shared = nil
+        }
+        
+        // Cancel all preload tasks
+        for (_, task) in preloadTasks {
+            task.cancel()
+        }
+        preloadTasks.removeAll()
+        
+        // Clean up all players
+        for (videoId, _) in preloadedPlayers {
+            cleanupPlayer(for: videoId)
+        }
+        preloadedPlayers.removeAll()
+        cancellables.removeAll()
     }
     
     func handleIndexChange(_ newIndex: Int) {
@@ -111,9 +135,20 @@ class VideoFeedViewModel: ObservableObject {
             loadMoreVideos()
         }
         
-        // Only preload the current video and the next one
+        // Pause all players first
+        for (_, player) in preloadedPlayers {
+            player.pause()
+        }
+        
+        // Only play the current video
         if newIndex < videos.count {
-            preloadVideo(videos[newIndex])
+            let currentVideo = videos[newIndex]
+            preloadVideo(currentVideo)
+            if let player = preloadedPlayers[currentVideo.id] {
+                player.play()
+            }
+            
+            // Preload but don't play the next video
             if newIndex + 1 < videos.count {
                 preloadVideo(videos[newIndex + 1])
             }
@@ -261,6 +296,8 @@ class VideoFeedViewModel: ObservableObject {
         // Don't reload if we already have a player
         if preloadedPlayers[video.id] != nil {
             Log.p(Log.video, Log.event, "Player already exists for video: \(video.id)")
+            // Ensure the player is available through the publisher
+            updatePlayerAvailability(videoId: video.id, player: preloadedPlayers[video.id])
             return
         }
         
@@ -305,6 +342,8 @@ class VideoFeedViewModel: ObservableObject {
                 // Create player with specific configuration
                 let player = AVPlayer(playerItem: playerItem)
                 player.automaticallyWaitsToMinimizeStalling = true
+                // Start paused by default
+                player.pause()
                 
                 if Task.isCancelled { return }
                 
@@ -314,11 +353,13 @@ class VideoFeedViewModel: ObservableObject {
                     cleanupPlayer(for: video.id)
                     
                     preloadedPlayers[video.id] = player
+                    updatePlayerAvailability(videoId: video.id, player: player)
                     Log.p(Log.video, Log.event, Log.success, "Successfully preloaded video: \(video.id)")
                     
-                    // If this is the first video and it's now ready, update the state
+                    // If this is the first video and it's now ready, update the state and play it
                     if !isFirstVideoReady && video.id == videos.first?.id {
                         isFirstVideoReady = true
+                        player.play()
                         Log.p(Log.video, Log.event, Log.success, "First video is ready for playback")
                     }
                 }
@@ -339,6 +380,7 @@ class VideoFeedViewModel: ObservableObject {
             player.pause()
             player.replaceCurrentItem(with: nil)
             preloadedPlayers[videoId] = nil
+            updatePlayerAvailability(videoId: videoId, player: nil)
             Log.p(Log.video, Log.event, "Cleaned up player for video: \(videoId)")
         }
         // Cancel any ongoing preload task
@@ -378,20 +420,19 @@ class VideoFeedViewModel: ObservableObject {
         }
     }
     
-    deinit {
-        Log.p(Log.video, Log.exit, "VideoFeedViewModel deinit")
-        // Cancel all preload tasks
-        for (_, task) in preloadTasks {
-            task.cancel()
+    func playerPublisher(for videoId: String) -> AnyPublisher<AVPlayer?, Never> {
+        if playerSubjects[videoId] == nil {
+            playerSubjects[videoId] = CurrentValueSubject<AVPlayer?, Never>(preloadedPlayers[videoId])
+            Log.p(Log.video, Log.event, "Created player publisher for video: \(videoId)")
         }
-        preloadTasks.removeAll()
-        
-        // Clean up all players
-        for (videoId, _) in preloadedPlayers {
-            cleanupPlayer(for: videoId)
+        return playerSubjects[videoId]!.eraseToAnyPublisher()
+    }
+    
+    private func updatePlayerAvailability(videoId: String, player: AVPlayer?) {
+        if let subject = playerSubjects[videoId] {
+            subject.send(player)
+            Log.p(Log.video, Log.event, "Updated player availability for video: \(videoId)")
         }
-        preloadedPlayers.removeAll()
-        cancellables.removeAll()
     }
 }
 
