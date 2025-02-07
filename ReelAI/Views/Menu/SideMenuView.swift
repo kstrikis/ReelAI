@@ -5,10 +5,11 @@ struct SideMenuView: View {
     @Binding var isPresented: Bool
     @State private var showProfile = false
     @State private var showDebugMenu = false
+    @State private var stars: [(position: CGPoint, opacity: Double)] = []
 
     var body: some View {
         GeometryReader { geometry in
-            ZStack(alignment: .trailing) {
+            ZStack(alignment: .topTrailing) {
                 // Semi-transparent background
                 Color.black.opacity(0.5)
                     .ignoresSafeArea()
@@ -44,7 +45,7 @@ struct SideMenuView: View {
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
-                    .background(Color.black)
+                    .background(Color.black.opacity(0.7))
 
                     // Menu items
                     ScrollView {
@@ -110,9 +111,25 @@ struct SideMenuView: View {
                     }
                 }
                 .frame(width: min(geometry.size.width * 0.8, 300))
-                .background(Color(UIColor.systemBackground))
+                .background(
+                    ZStack {
+                        Color.black
+                        // Starfield effect
+                        ForEach(0..<stars.count, id: \.self) { index in
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 2, height: 2)
+                                .position(stars[index].position)
+                                .opacity(stars[index].opacity)
+                        }
+                    }
+                )
+                .clipShape(RoundedRectangle(cornerRadius: 15, style: .continuous))
+                .shadow(radius: 10)
                 .offset(x: isPresented ? 0 : geometry.size.width)
+                .offset(y: geometry.safeAreaInsets.top)
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isPresented)
         }
         .sheet(isPresented: $showProfile) {
             ProfileView()
@@ -126,9 +143,22 @@ struct SideMenuView: View {
         #endif
         .onAppear {
             Log.p(Log.app, Log.start, "Side menu appeared")
+            generateStars()
         }
         .onDisappear {
             Log.p(Log.app, Log.exit, "Side menu disappeared")
+        }
+    }
+    
+    private func generateStars() {
+        stars = (0..<100).map { _ in
+            (
+                position: CGPoint(
+                    x: CGFloat.random(in: 0...300),
+                    y: CGFloat.random(in: 0...800)
+                ),
+                opacity: Double.random(in: 0.1...0.8)
+            )
         }
     }
 }
@@ -148,8 +178,11 @@ private struct MenuButton: View {
                 Spacer()
             }
             .foregroundColor(.white)
+            .padding(.horizontal)
             .padding(.vertical, 12)
+            .contentShape(Rectangle())
         })
+        .buttonStyle(PlainButtonStyle())
     }
 }
 

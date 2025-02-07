@@ -12,30 +12,52 @@ import FirebaseAuth
 struct ContentView: View {
     @EnvironmentObject private var authService: AuthenticationService
     @State private var selectedTab = 1 // 0: Camera, 1: AI Tools, 2: Home, 3: Menu
+    @State private var showSideMenu = false
 
     var body: some View {
         NavigationStack {
-            TabView(selection: $selectedTab) {
-                // Camera View (Left)
-                CameraRecordingView(isActive: selectedTab == 0)
-                    .ignoresSafeArea()
-                    .tag(0)
+            ZStack {
+                TabView(selection: $selectedTab) {
+                    // Camera View (Left)
+                    CameraRecordingView(isActive: selectedTab == 0)
+                        .ignoresSafeArea()
+                        .tag(0)
 
-                // AI Tools (Center-Left)
-                AIToolsView()
-                    .tag(1)
+                    // AI Tools (Center-Left)
+                    AIToolsView()
+                        .tag(1)
 
-                // Video List (Center-Right)
-                VideoListView()
-                    .tag(2)
+                    // Video List (Center-Right)
+                    VideoListView()
+                        .tag(2)
 
-                // Menu View (Right)
-                SideMenuView(isPresented: .constant(true))
-                    .tag(3)
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .onChange(of: selectedTab) { _, newValue in
-                Log.p(Log.app, Log.event, "User switched to tab: \(newValue)")
+                    // Menu View (Right)
+                    SideMenuView(isPresented: .constant(true))
+                        .tag(3)
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .onChange(of: selectedTab) { _, newValue in
+                    Log.p(Log.app, Log.event, "User switched to tab: \(newValue)")
+                }
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button {
+                            withAnimation {
+                                showSideMenu.toggle()
+                            }
+                        } label: {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.title2)
+                                .foregroundColor(.white)
+                        }
+                    }
+                }
+
+                // Side Menu Overlay
+                if showSideMenu {
+                    SideMenuView(isPresented: $showSideMenu)
+                        .transition(.opacity)
+                }
             }
         }
         .onAppear {
