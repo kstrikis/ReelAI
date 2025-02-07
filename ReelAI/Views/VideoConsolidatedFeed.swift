@@ -149,75 +149,88 @@ class UnifiedVideoHandler: ObservableObject {
     }
 
     func handleIndexChange(_ newIndex: Int) {
-        // Use modulo to wrap the index.  This is the core of infinite scrolling.
-        let wrappedIndex = newIndex % videos.count
+        Log.p(Log.video, Log.event, "Beginning index change handling - New Index: \(newIndex)")
+        
+        // Validate index bounds
+        guard newIndex >= 0 && newIndex < videos.count else {
+            Log.p(Log.video, Log.event, Log.error, "Invalid index: \(newIndex), videos count: \(videos.count)")
+            return
+        }
 
-        Log.p(Log.video, Log.event, "Index change - Raw: \(newIndex), Wrapped: \(wrappedIndex), Total Videos: \(videos.count)")
+        // Pause all existing players first
+        for (id, player) in preloadedPlayers {
+            player.pause()
+            Log.p(Log.video, Log.event, "Paused player for video: \(id)")
+        }
 
-        // Pause *all* players.
-        preloadedPlayers.values.forEach { $0.pause() }
-        Log.p(Log.video, Log.event, "Paused all active players")
+        // Update current index
+        currentIndex = newIndex
+        Log.p(Log.video, Log.event, "Updated current index to: \(newIndex)")
 
-        // Update current index to the *wrapped* index.
-        currentIndex = wrappedIndex
-
-        //Get and manage video by the *wrapped* index
-        let currentVideo = videos[wrappedIndex]
-        let id = currentVideo.id
-        if let player = preloadedPlayers[id] {
-            Log.p(Log.video, Log.event, "Playing existing player for video: \(id)")
-            player.seek(to: CMTime.zero)
+        // Handle current video
+        let currentVideo = videos[newIndex]
+        let currentId = currentVideo.id
+        
+        if let player = preloadedPlayers[currentId] {
+            Log.p(Log.video, Log.event, "Playing existing player for current video: \(currentId)")
+            player.seek(to: .zero)
             player.play()
         } else {
-            Log.p(Log.video, Log.event, "Preloading current video as not found: \(id)")
+            Log.p(Log.video, Log.event, "Preloading current video: \(currentId)")
             preloadVideo(currentVideo)
         }
 
-        // Preload adjacent videos based on *wrapped* indices.
-        let adjacentIndices = [wrappedIndex - 1, wrappedIndex + 1]
-            .map { $0 % videos.count }  // Wrap adjacent indices too
-            .filter { $0 >= 0 && $0 < videos.count } // Ensure within bounds
+        // Calculate and preload adjacent videos
+        let preloadIndices = Set([
+            max(0, newIndex - 1),
+            newIndex,
+            min(videos.count - 1, newIndex + 1)
+        ])
         
-        Log.p(Log.video, Log.event, "Preloading adjacent indices: \(adjacentIndices)")
-
-        for index in adjacentIndices {
+        Log.p(Log.video, Log.event, "Preloading indices: \(preloadIndices)")
+        
+        for index in preloadIndices {
             let video = videos[index]
             if preloadedPlayers[video.id] == nil {
                 preloadVideo(video)
             }
         }
 
-        cleanupInactivePlayers(around: wrappedIndex)
+        // Cleanup inactive players
+        cleanupInactivePlayers(around: newIndex)
 
-        //Pagination check: Load more if near the end.
-        if wrappedIndex >= videos.count - 2 {
-            Log.p(Log.video, Log.event, "Near end of videos, triggering pagination")
+        // Check for pagination
+        if newIndex >= videos.count - 2 {
+            Log.p(Log.video, Log.event, "Near end of list, triggering pagination")
             loadMoreVideos()
         }
     }
 
     private func cleanupInactivePlayers(around index: Int) {
-        //Calculate active indices, taking into account wrapping.
-        let activeIndices = [index - 1, index, index + 1].map { $0 % videos.count }.filter { $0 >= 0 }
-        //  'id' will be non-nil after loading from Firestore
-        var activeVideoIds = Set(activeIndices.compactMap { videos[$0].id })
+        let keepIndices = Set([
+            max(0, index - 1),
+            index,
+            min(videos.count - 1, index + 1)
+        ])
+        
+        var keepIds = Set(keepIndices.map { videos[$0].id })
+        Log.p(Log.video, Log.event, "Keeping video IDs: \(keepIds)")
 
-        // Always keep first video loaded.
-        if let firstVideoId = videos.first?.id {
-            activeVideoIds.insert(firstVideoId)
+        // Always keep first video
+        if let firstId = videos.first?.id {
+            keepIds.insert(firstId)
         }
 
-        // Cancel tasks and remove players for videos that are no longer active.
-         for videoId in preloadedPlayers.keys {
-             if !activeVideoIds.contains(videoId) {
-                 preloadTasks[videoId]?.cancel()
-                 preloadTasks[videoId] = nil
-                 preloadedPlayers[videoId]?.pause() // Ensure the player is paused
-                 preloadedPlayers[videoId] = nil
-                 playerSubjects[videoId]?.send(nil)  // Important:  Notify subscribers that the player is gone.
-                 playerSubjects[videoId] = nil      // Clean up the subject.
-             }
-         }
+        // Remove players not in keepIds
+        for id in preloadedPlayers.keys where !keepIds.contains(id) {
+            preloadedPlayers[id]?.pause()
+            preloadedPlayers[id] = nil
+            preloadTasks[id]?.cancel()
+            preloadTasks[id] = nil
+            playerSubjects[id]?.send(nil)
+            playerSubjects[id] = nil
+            Log.p(Log.video, Log.event, "Cleaned up player for video: \(id)")
+        }
     }
 
     func updateActiveVideos(_ videoId: String) {
@@ -237,20 +250,30 @@ struct UnifiedVideoFeed: View {
                 if handler.videos.isEmpty {
                     emptyStateView
                 } else {
-                    // Use .vertical for PageView
-                    PageView(
-                        axis: .vertical,
-                        pages: handler.videos.indices.map { index in //Use indices for mapping
+                    TabView(selection: $handler.currentIndex) {
+                        ForEach(handler.videos.indices, id: \.self) { index in
                             UnifiedVideoPlayer(
                                 video: handler.videos[index],
                                 player: handler.getPlayer(for: handler.videos[index]),
                                 size: geometry.size
                             )
-                            .id(index) // Crucial: Use .id(index) for correct identification
-                        },
-                        currentIndex: $handler.currentIndex
-                    )
-                    // No .onChange here. PageView handles the index changes internally.
+                            .id(handler.videos[index].id) // Use video ID for stable identity
+                            .tag(index)
+                            .onAppear {
+                                Log.p(Log.video, Log.event, "Video player appeared - Index: \(index), ID: \(handler.videos[index].id)")
+                            }
+                            .onDisappear {
+                                Log.p(Log.video, Log.event, "Video player disappeared - Index: \(index), ID: \(handler.videos[index].id)")
+                            }
+                        }
+                    }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+                    .scrollTargetBehavior(.viewAligned)
+                    .ignoresSafeArea()
+                    .onChange(of: handler.currentIndex) { oldValue, newValue in
+                        Log.p(Log.video, Log.event, "Tab index changed from: \(oldValue) to: \(newValue)")
+                        handler.handleIndexChange(newValue)
+                    }
                 }
             }
         }
@@ -267,60 +290,6 @@ struct UnifiedVideoFeed: View {
                 handler.loadInitialVideos()
             }
             .foregroundColor(.blue)
-        }
-    }
-}
-
-// Custom PageView implementation
-struct PageView<Content: View>: View {
-    let axis: Axis
-    let pages: [Content]
-    @Binding var currentIndex: Int
-
-    var body: some View {
-        GeometryReader { geometry in
-            ScrollViewReader { proxy in
-                ScrollView(axis == .vertical ? .vertical : .horizontal, showsIndicators: false) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(pages.indices, id: \.self) { index in
-                            pages[index]
-                                .frame(width: geometry.size.width, height: geometry.size.height)
-                                .id(index)
-                        }
-                    }
-                }
-                .scrollTargetLayout()
-                .scrollTargetBehavior(.paging)
-                .simultaneousGesture(
-                    DragGesture()
-                        .onEnded { gesture in
-                            let height = geometry.size.height
-                            let offset = gesture.translation.height
-                            
-                            Log.p(Log.video, Log.event, "Drag metrics - Height: \(String(format: "%.2f", height)), Offset: \(String(format: "%.2f", offset)), Threshold: \(String(format: "%.2f", height * 0.3))")
-
-                            // Determine direction and calculate new index
-                            let newIndex: Int
-                            if abs(offset) > height * 0.3 {
-                                newIndex = offset > 0 ?
-                                    max(currentIndex - 1, 0) :
-                                    min(currentIndex + 1, pages.count - 1)
-                                Log.p(Log.video, Log.event, "Scroll threshold met - Direction: \(offset > 0 ? "up" : "down"), New Index: \(newIndex)")
-                            } else {
-                                newIndex = currentIndex
-                                Log.p(Log.video, Log.event, "Scroll threshold not met - Staying at index: \(currentIndex)")
-                            }
-
-                            withAnimation {
-                                Log.p(Log.video, Log.event, "Initiating scroll - From: \(currentIndex), To: \(newIndex), Total Pages: \(pages.count)")
-                                proxy.scrollTo(newIndex, anchor: .center)
-                                if newIndex != currentIndex {
-                                    UnifiedVideoHandler.shared.handleIndexChange(newIndex)
-                                }
-                            }
-                        }
-                )
-            }
         }
     }
 }
