@@ -21,7 +21,7 @@ class UnifiedVideoHandler: ObservableObject {
     // Player management
     private var preloadedPlayers: [String: AVPlayer] = [:]
     private var preloadTasks: [String: Task<Void, Error>] = [:]
-    private var playerSubjects: [String: CurrentValueSubject<AVPlayer?, Never>] = [:] // Keep for future use for observing player properties.
+    private var playerSubjects: [String: CurrentValueSubject<AVPlayer?, Never>] = [:]
     var cancellables: Set<AnyCancellable> = []  // For managing Combine subscriptions
     private var initialBatchSize = 5 // How many to get first
     private var paginationBatchSize = 3 // How many more to add on
@@ -99,7 +99,6 @@ class UnifiedVideoHandler: ObservableObject {
         return preloadedPlayers[video.id]
     }
 
-    // Keep this function -- it is correct and useful for the future
     func playerPublisher(for videoId: String) -> AnyPublisher<AVPlayer?, Never> {
         if playerSubjects[videoId] == nil {
             playerSubjects[videoId] = CurrentValueSubject<AVPlayer?, Never>(preloadedPlayers[videoId])
@@ -164,7 +163,7 @@ class UnifiedVideoHandler: ObservableObject {
         // 1. Save position and pause previous video
         if videos.indices.contains(currentIndex), let oldPlayer = preloadedPlayers[videos[currentIndex].id] {
             videoPositions[videos[currentIndex].id] = oldPlayer.currentTime()
-            // oldPlayer.pause()  // DISABLED PAUSE POINT #1
+            // oldPlayer.pause()  // DISABLED: Need to figure out correct pause timing
             Log.p(Log.video, Log.event, "Saving position for video: \(videos[currentIndex].id) at position: \(oldPlayer.currentTime().seconds)")
         }
 
@@ -251,7 +250,10 @@ class UnifiedVideoHandler: ObservableObject {
         // Remove players and positions not in keepIds
         for id in preloadedPlayers.keys where !keepIds.contains(id) {
             Log.p(Log.video, Log.event, "Cleaning up player for video: \(id)")
-            // preloadedPlayers[id]?.pause()  // DISABLED PAUSE POINT #2
+            if let player = preloadedPlayers[id] {
+                player.pause()  // Ensure playback is stopped
+                player.replaceCurrentItem(with: nil)  // Remove the item to free up resources
+            }
             preloadedPlayers[id] = nil
             playerSubjects[id]?.send(nil)
             playerSubjects[id] = nil
