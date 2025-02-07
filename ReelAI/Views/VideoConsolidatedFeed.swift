@@ -26,6 +26,9 @@ class UnifiedVideoHandler: ObservableObject {
     private var initialBatchSize = 5 // How many to get first
     private var paginationBatchSize = 3 // How many more to add on
 
+    // Track video positions
+    private var videoPositions: [String: CMTime] = [:]
+
     private init() {
         loadInitialVideos()
     }
@@ -118,30 +121,35 @@ class UnifiedVideoHandler: ObservableObject {
         let id = video.id
         if preloadedPlayers[id] != nil { return }
 
-        let task: Task<Void, Error> = Task {
+        Task {
             do {
                 Log.p(Log.video, Log.event, "Preloading video: \(id)")
-                // Use FirestoreService to get the URL.
                 guard let url = try await FirestoreService.shared.getVideoDownloadURL(videoId: id) else {
                     Log.p(Log.video, Log.event, Log.error, "Failed to get download URL for \(id)")
-                    return // Exit gracefully if no URL.
+                    return
                 }
 
                 let asset = AVURLAsset(url: url)
                 let playerItem = AVPlayerItem(asset: asset)
                 let player = AVPlayer(playerItem: playerItem)
+                
+                // Configure for smooth playback
+                player.automaticallyWaitsToMinimizeStalling = false
 
                 await MainActor.run {
                     preloadedPlayers[id] = player
                     playerSubjects[id]?.send(player)
                     Log.p(Log.video, Log.event, "Successfully preloaded video: \(id)")
+
+                    // Auto-play if this is the current video
+                    if videos.indices.contains(currentIndex), videos[currentIndex].id == id {
+                        player.play()
+                    }
                 }
             } catch {
                 Log.p(Log.video, Log.event, Log.error, "Preload failed for \(id): \(error)")
             }
         }
-
-        preloadTasks[id] = task
     }
 
     func handleIndexChange(_ newIndex: Int) {
@@ -153,85 +161,112 @@ class UnifiedVideoHandler: ObservableObject {
             return
         }
 
-        // Pause all existing players first
-        for (id, player) in preloadedPlayers {
-            player.pause()
-            Log.p(Log.video, Log.event, "Paused player for video: \(id)")
+        // 1. Save position and pause previous video
+        if videos.indices.contains(currentIndex), let oldPlayer = preloadedPlayers[videos[currentIndex].id] {
+            videoPositions[videos[currentIndex].id] = oldPlayer.currentTime()
+            // oldPlayer.pause()  // DISABLED PAUSE POINT #1
+            Log.p(Log.video, Log.event, "Saving position for video: \(videos[currentIndex].id) at position: \(oldPlayer.currentTime().seconds)")
         }
 
-        // Update current index
+        // 2. Update current index
         currentIndex = newIndex
         Log.p(Log.video, Log.event, "Updated current index to: \(newIndex)")
 
-        // Handle current video
+        // 3. Handle current video - PRIORITY
         let currentVideo = videos[newIndex]
-        let currentId = currentVideo.id
-        
-        if let player = preloadedPlayers[currentId] {
-            Log.p(Log.video, Log.event, "Playing existing player for current video: \(currentId)")
-            player.seek(to: .zero)
-            player.play()
+        if let player = preloadedPlayers[currentVideo.id] {
+            // Restore previous position or start from beginning
+            let position = videoPositions[currentVideo.id] ?? .zero
+            
+            // Ensure we're on the main thread for playback
+            Task { @MainActor in
+                player.seek(to: position)
+                player.play()
+                Log.p(Log.video, Log.event, "Playing existing player for current video: \(currentVideo.id) from position: \(position.seconds)")
+            }
         } else {
-            Log.p(Log.video, Log.event, "Preloading current video: \(currentId)")
+            Log.p(Log.video, Log.event, "Preloading current video: \(currentVideo.id)")
             preloadVideo(currentVideo)
         }
 
-        // Calculate and preload adjacent videos
-        let preloadIndices = Set([
-            max(0, newIndex - 1),
-            newIndex,
-            min(videos.count - 1, newIndex + 1)
-        ])
-        
-        Log.p(Log.video, Log.event, "Preloading indices: \(preloadIndices)")
-        
-        for index in preloadIndices {
-            let video = videos[index]
-            if preloadedPlayers[video.id] == nil {
-                preloadVideo(video)
+        // 4. Start a background task for non-critical operations
+        Task {
+            // Add a 1-second delay before starting background operations
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            
+            // Check for pagination first since it's most important for UX
+            if newIndex >= videos.count - 4 {
+                Log.p(Log.video, Log.event, "Near end of list, triggering pagination")
+                await MainActor.run {
+                    loadMoreVideos()
+                }
             }
-        }
 
-        // Cleanup inactive players
-        cleanupInactivePlayers(around: newIndex)
+            // Calculate which videos need preloading (excluding current and already loaded)
+            let adjacentIndices = Set([
+                max(0, newIndex - 1),
+                min(videos.count - 1, newIndex + 1)
+            ])
+            
+            let preloadIndices = adjacentIndices.filter { index in
+                let video = videos[index]
+                return preloadedPlayers[video.id] == nil // Only preload if not already loaded
+            }
+            
+            if !preloadIndices.isEmpty {
+                Log.p(Log.video, Log.event, "Preloading adjacent indices: \(preloadIndices)")
+                
+                // Preload one at a time to avoid overwhelming the system
+                for index in preloadIndices {
+                    let video = videos[index]
+                    await MainActor.run {
+                        preloadVideo(video)
+                    }
+                    // Add a small delay between each preload
+                    try? await Task.sleep(nanoseconds: 100_000_000)
+                }
+            }
 
-        // Check for pagination
-        if newIndex >= videos.count - 2 {
-            Log.p(Log.video, Log.event, "Near end of list, triggering pagination")
-            loadMoreVideos()
+            // Finally, cleanup inactive players
+            await MainActor.run {
+                cleanupInactivePlayers(around: newIndex)
+            }
         }
     }
 
     private func cleanupInactivePlayers(around index: Int) {
+        // ALWAYS keep the current video's player
+        var keepIds = Set([videos[index].id])
+        
+        // Add adjacent videos we want to keep
         let keepIndices = Set([
             max(0, index - 1),
             index,
             min(videos.count - 1, index + 1)
         ])
         
-        var keepIds = Set(keepIndices.map { videos[$0].id })
+        keepIds.formUnion(keepIndices.compactMap { videos.indices.contains($0) ? videos[$0].id : nil })
         Log.p(Log.video, Log.event, "Keeping video IDs: \(keepIds)")
 
-        // Always keep first video
-        if let firstId = videos.first?.id {
-            keepIds.insert(firstId)
-        }
-
-        // Remove players not in keepIds
+        // Remove players and positions not in keepIds
         for id in preloadedPlayers.keys where !keepIds.contains(id) {
-            preloadedPlayers[id]?.pause()
+            Log.p(Log.video, Log.event, "Cleaning up player for video: \(id)")
+            // preloadedPlayers[id]?.pause()  // DISABLED PAUSE POINT #2
             preloadedPlayers[id] = nil
-            preloadTasks[id]?.cancel()
-            preloadTasks[id] = nil
             playerSubjects[id]?.send(nil)
             playerSubjects[id] = nil
-            Log.p(Log.video, Log.event, "Cleaned up player for video: \(id)")
+            videoPositions.removeValue(forKey: id)  // Clean up positions too
         }
     }
 
     func updateActiveVideos(_ videoId: String) {
         //Unused at the moment
         activeVideoIds.insert(videoId)
+    }
+
+    // Add position update method
+    func updateVideoPosition(for videoId: String, position: CMTime) {
+        videoPositions[videoId] = position
     }
 }
 
@@ -253,8 +288,9 @@ struct UnifiedVideoFeed: View {
                                 player: handler.getPlayer(for: handler.videos[index]),
                                 size: geometry.size
                             )
-                            .id(handler.videos[index].id) // Use video ID for stable identity
+                            .id(handler.videos[index].id)
                             .tag(index)
+                            .scrollTargetLayout()
                             .onAppear {
                                 Log.p(Log.video, Log.event, "Video player appeared - Index: \(index), ID: \(handler.videos[index].id)")
                             }
@@ -293,9 +329,8 @@ struct UnifiedVideoFeed: View {
 struct UnifiedVideoPlayer: View {
     let video: Video
     let size: CGSize
-    @State private var player: AVPlayer? // Observe changes to the player.
+    @State private var player: AVPlayer?
     @State private var showingControls = true
-    @State private var isPlaying = false // Local state to track play/pause.
     private var playerPublisher: AnyPublisher<AVPlayer?, Never>
     @StateObject private var subscriptions = SubscriptionHolder()
 
@@ -319,19 +354,19 @@ struct UnifiedVideoPlayer: View {
         }
         .onTapGesture {
             showingControls.toggle()
-            if let player = player {
-                if isPlaying {
-                    player.pause()
-                } else {
-                    player.play()
-                }
-                isPlaying.toggle() // Toggle the local play/pause state.
-            }
-
+            togglePlayback()
         }
         .onReceive(playerPublisher) { newPlayer in
-            //Crucial: listen to player changes published by UnifiedVideoHandler
             self.player = newPlayer
+        }
+    }
+    
+    private func togglePlayback() {
+        guard let player = player else { return }
+        if player.rate != 0 {
+            player.pause()
+        } else {
+            player.play()
         }
     }
 
@@ -343,23 +378,22 @@ struct UnifiedVideoPlayer: View {
             object: player.currentItem,
             queue: .main
         ) { _ in
+            // When video ends, clear saved position and restart
+            UnifiedVideoHandler.shared.updateVideoPosition(for: video.id, position: .zero)
             player.seek(to: .zero)
             player.play()
-            isPlaying = true
         }
 
-        // Store in our own cancellables instead of UnifiedVideoHandler's
-        player.publisher(for: \.rate)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak player] newRate in
-                guard let player = player else { return }
-                isPlaying = (newRate != 0 && player.error == nil)
-            }
-            .store(in: &subscriptions.cancellables)
+        // Add periodic time observer
+        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
+        player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
+            guard let player = player else { return }
+            UnifiedVideoHandler.shared.updateVideoPosition(for: video.id, position: time)
+        }
     }
 
     private func cleanupPlayer() {
-        player?.pause()
+        // player?.pause()  // DISABLED PAUSE POINT #3
         NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: player?.currentItem)
     }
 
@@ -381,18 +415,9 @@ struct UnifiedVideoPlayer: View {
                 .padding()
 
                 Spacer()
-                // Play/Pause Button (Optional, but good for clarity)
-                Button(action: {
-                    if let player = player {
-                         if isPlaying {
-                             player.pause()
-                         } else {
-                             player.play()
-                         }
-                         isPlaying.toggle() // Toggle local play/pause state
-                     }
-                }) {
-                    Image(systemName: isPlaying ? "pause.fill" : "play.fill")
+                
+                Button(action: togglePlayback) {
+                    Image(systemName: player?.rate != 0 ? "pause.fill" : "play.fill")
                         .font(.system(size: 40))
                         .foregroundColor(.white)
                 }
