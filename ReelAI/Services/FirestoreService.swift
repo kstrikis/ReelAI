@@ -482,6 +482,45 @@ final class FirestoreService {
         }
     }
 
+    /// Fetches a specified number of random videos from the database.
+    /// - Parameter count: The number of random videos to fetch
+    /// - Returns: An array of random videos, may contain fewer items than requested if not enough videos exist
+    func fetchRandomVideos(count: Int) async throws -> [Video] {
+        Log.p(Log.firebase, Log.read, "Fetching \(count) random videos")
+        
+        // Get all videos in a single query
+        let snapshot = try await db.collection("videos").getDocuments()
+        let allVideos = snapshot.documents.compactMap { document -> Video? in
+            do {
+                return try Video(from: document)
+            } catch {
+                Log.p(Log.firebase, Log.read, Log.error, "Error decoding video: \(error)")
+                return nil
+            }
+        }
+        
+        guard !allVideos.isEmpty else {
+            Log.p(Log.firebase, Log.read, Log.warning, "No videos found in database")
+            return []
+        }
+        
+        // Randomly select the requested number of videos
+        var randomVideos: [Video] = []
+        let requestedCount = min(count, allVideos.count)
+        
+        // Create a mutable copy of indices that we can remove from
+        var availableIndices = Array(0..<allVideos.count)
+        
+        while randomVideos.count < requestedCount && !availableIndices.isEmpty {
+            let randomIndex = Int.random(in: 0..<availableIndices.count)
+            let videoIndex = availableIndices.remove(at: randomIndex)
+            randomVideos.append(allVideos[videoIndex])
+        }
+        
+        Log.p(Log.firebase, Log.read, Log.success, "Successfully fetched \(randomVideos.count) random videos")
+        return randomVideos
+    }
+
     func getVideoDownloadURL(videoId: String) async throws -> URL? {
         let storageRef = Storage.storage().reference()
         

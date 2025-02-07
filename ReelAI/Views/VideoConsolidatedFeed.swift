@@ -31,7 +31,7 @@ class UnifiedVideoHandler: ObservableObject {
     }
 
     func loadInitialVideos() {
-        Log.p(Log.video, Log.event, "Loading initial batch of videos")
+        Log.p(Log.video, Log.event, "Loading initial batch of random videos")
 
         isLoading = true
         Task {
@@ -43,8 +43,9 @@ class UnifiedVideoHandler: ObservableObject {
                     try await FirestoreService.shared.seedVideos()
                 }
 
-                let batch = try await FirestoreService.shared.fetchVideoBatch(startingAfter: nil, limit: initialBatchSize)
-                Log.p(Log.video, Log.event, "Received \(batch.count) videos")
+                // Use the new random videos function
+                let batch = try await FirestoreService.shared.fetchRandomVideos(count: initialBatchSize)
+                Log.p(Log.video, Log.event, "Received \(batch.count) random videos")
 
                 await MainActor.run {
                     self.videos = batch
@@ -67,14 +68,9 @@ class UnifiedVideoHandler: ObservableObject {
 
            Task {
                do {
-                   guard let lastVideo = videos.last else {
-                       // No videos to paginate from, shouldn't happen normally.
-                       isLoading = false
-                       return
-                   }
-
-                   let newVideos = try await FirestoreService.shared.fetchVideoBatch(startingAfter: lastVideo, limit: paginationBatchSize)
-                   Log.p(Log.video, Log.event, "Fetched \(newVideos.count) more videos")
+                   // Use random videos for pagination too
+                   let newVideos = try await FirestoreService.shared.fetchRandomVideos(count: paginationBatchSize)
+                   Log.p(Log.video, Log.event, "Fetched \(newVideos.count) more random videos")
                    await MainActor.run{
                        // Append the newly fetched videos to the existing array.
                        self.videos.append(contentsOf: newVideos)
