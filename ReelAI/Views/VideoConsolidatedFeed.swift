@@ -360,7 +360,8 @@ struct UnifiedVideoPlayer: View {
     let video: Video
     let size: CGSize
     @State private var player: AVPlayer?
-    @State private var showingControls = true
+    @State private var showInfo = false
+    @State private var hideTask: Task<Void, Never>?
     private var playerPublisher: AnyPublisher<AVPlayer?, Never>
     @StateObject private var subscriptions = SubscriptionHolder()
 
@@ -378,32 +379,106 @@ struct UnifiedVideoPlayer: View {
                 CustomVideoPlayer(player: player)
                     .onAppear(perform: setupPlayerObservations)
                     .onDisappear {
-                        // DO NOT pause here - it's unreliable during swipe transitions
-                        // Pausing is handled in UnifiedVideoHandler.handleIndexChange
                         cleanupPlayer()
                     }
             }
 
-            controlsOverlay
+            // Video info and engagement overlay
+            ZStack {
+                // Semi-transparent gradient background for text readability
+                LinearGradient(
+                    gradient: Gradient(colors: [
+                        Color.black.opacity(showInfo ? 0.7 : 0),
+                        Color.black.opacity(showInfo ? 0.4 : 0),
+                        Color.clear,
+                        Color.clear
+                    ]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                VStack {
+                    // Video info (top)
+                    if showInfo {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(video.title)
+                                .font(.title2)
+                                .bold()
+                            
+                            HStack {
+                                Text(video.username)
+                                    .fontWeight(.medium)
+                            }
+                            
+                            if let description = video.description {
+                                Text(description)
+                                    .font(.subheadline)
+                                    .lineLimit(2)
+                            }
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal)
+                        .padding(.top, 50)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .transition(.opacity)
+                    }
+
+                    Spacer()
+                    
+                    // Engagement buttons (right)
+                    VStack(spacing: 12) {
+                        Button(action: { /* Like action */ }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: "heart.fill")
+                                    .font(.system(size: 30))
+                                Text("Like")
+                                    .font(.caption)
+                            }
+                        }
+                        
+                        Button(action: { /* Dislike action */ }) {
+                            VStack(spacing: 4) {
+                                Image(systemName: "heart.slash.fill")
+                                    .font(.system(size: 30))
+                                Text("Dislike")
+                                    .font(.caption)
+                            }
+                        }
+                    }
+                    .foregroundColor(.white)
+                    .padding(.trailing, 16)
+                    .padding(.bottom, 50)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            .animation(.easeInOut, value: showInfo)
         }
         .onTapGesture {
-            showingControls.toggle()
-            togglePlayback()
+            showInfo.toggle()
+            scheduleInfoHide()
         }
         .onReceive(playerPublisher) { newPlayer in
             self.player = newPlayer
         }
     }
     
-    private func togglePlayback() {
-        guard let player = player else { return }
-        if player.rate != 0 {
-            player.pause()
-        } else {
-            player.play()
+    private func scheduleInfoHide() {
+        // Cancel any existing hide task
+        hideTask?.cancel()
+        
+        // If we're showing info, schedule it to be hidden
+        if showInfo {
+            hideTask = Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000) // 5 seconds
+                if !Task.isCancelled {
+                    await MainActor.run {
+                        showInfo = false
+                    }
+                }
+            }
         }
     }
-
+    
     private func setupPlayerObservations() {
         guard let player = player else { return }
 
@@ -447,43 +522,6 @@ struct UnifiedVideoPlayer: View {
             } else {
                 Log.p(Log.video, Log.event, "Skipped pausing current video: \(video.id)")
             }
-        }
-    }
-
-    @ViewBuilder
-    private var controlsOverlay: some View {
-        if showingControls {
-            VStack {
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(video.title)
-                            .font(.headline)
-                            .foregroundColor(.white)
-                        Text(video.username)
-                            .font(.subheadline)
-                            .foregroundColor(.gray)
-                    }
-                    Spacer()
-                }
-                .padding()
-
-                Spacer()
-                
-                Button(action: togglePlayback) {
-                    Image(systemName: player?.rate != 0 ? "pause.fill" : "play.fill")
-                        .font(.system(size: 40))
-                        .foregroundColor(.white)
-                }
-
-                Spacer()
-            }
-            .background(
-                LinearGradient(
-                    gradient: Gradient(colors: [.black.opacity(0.7), .clear, .black.opacity(0.7)]),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
         }
     }
 }
