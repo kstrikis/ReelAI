@@ -21,10 +21,10 @@ struct DebugMenuView: View {
                 }
                 
                 Button(action: {
-                    Log.p(Log.debug, Log.analyze, "Opening video feed")
+                    Log.p(Log.debug, Log.analyze, "Opening consolidated video feed")
                     showVideoFeed = true
                 }) {
-                    Label("Video Feed", systemImage: "play.square.stack")
+                    Label("Consolidated Feed", systemImage: "play.square.stack.fill")
                 }
             }
             
@@ -131,8 +131,8 @@ struct DebugMenuView: View {
         }
         .sheet(isPresented: $showVideoFeed) {
             NavigationView {
-                VideoFeedView()
-                    .navigationTitle("Debug: Video Feed")
+                UnifiedVideoFeed()
+                    .navigationTitle("Consolidated Video Feed")
                     .navigationBarTitleDisplayMode(.inline)
             }
         }

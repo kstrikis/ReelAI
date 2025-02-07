@@ -3,6 +3,7 @@ import FirebaseFirestoreCombineSwift
 import Combine
 import Foundation
 import FirebaseAuth
+import FirebaseStorage
 
 /// Manages all Firestore database operations
 final class FirestoreService {
@@ -21,8 +22,8 @@ final class FirestoreService {
         
         // Log configuration details
         Log.p(Log.firebase, Log.event, "Firestore Configuration:")
-        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID)")
-        Log.p(Log.firebase, Log.event, "Storage Bucket: \(db.app.options.storageBucket)")
+        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID ?? "unknown")")
+        Log.p(Log.firebase, Log.event, "Storage Bucket: \(db.app.options.storageBucket ?? "unknown")")
         
         // Enable network and verify connection
         db.enableNetwork { error in
@@ -451,6 +452,42 @@ final class FirestoreService {
             }
         }.eraseToAnyPublisher()
     }
+    
+    func fetchVideoBatch() async throws -> [Video] {
+        let snapshot = try await db.collection("videos")
+            .order(by: "createdAt", descending: true)
+            .limit(to: 5)
+            .getDocuments()
+        
+        return snapshot.documents.compactMap { queryDoc in
+            do {
+                // QueryDocumentSnapshot is a subclass of DocumentSnapshot, so this is safe
+                return try Video(from: queryDoc)
+            } catch {
+                Log.p(Log.firebase, Log.read, Log.error, "Failed to decode video \(queryDoc.documentID): \(error)")
+                return nil
+            }
+        }
+    }
+    
+    func getVideoDownloadURL(videoId: String) async throws -> URL? {
+        let docRef = db.collection("videos").document(videoId)
+        let docSnapshot = try await docRef.getDocument()
+        
+        guard docSnapshot.exists else {
+            Log.p(Log.firebase, Log.read, Log.error, "Video document does not exist: \(videoId)")
+            return nil
+        }
+        
+        do {
+            let video = try Video(from: docSnapshot)
+            let path = "videos/\(video.ownerId)/\(videoId).mp4"
+            return try await Storage.storage().reference().child(path).downloadURL()
+        } catch {
+            Log.p(Log.firebase, Log.read, Log.error, "Failed to decode video \(videoId): \(error)")
+            return nil
+        }
+    }
 }
 
 // MARK: - Model Extensions
@@ -495,4 +532,35 @@ struct VideoModel: Identifiable, Codable {
         self.createdAt = (dictionary["createdAt"] as? Timestamp)?.dateValue() ?? Date()
         self.status = dictionary["status"] as? String ?? "unknown"
     }
+}
+
+extension Video {
+    init(from document: DocumentSnapshot) throws {
+        guard let data = document.data() else {
+            throw FirestoreError.invalidDocument
+        }
+        
+        // Ensure required fields exist and have correct types
+        guard let ownerId = data["ownerId"] as? String,
+              let username = data["username"] as? String,
+              let title = data["title"] as? String else {
+            throw FirestoreError.missingRequiredFields
+        }
+        
+        self.init(
+            id: document.documentID,
+            ownerId: ownerId,
+            username: username,
+            title: title,
+            description: data["description"] as? String,
+            createdAt: (data["createdAt"] as? Timestamp)?.dateValue() ?? Date(),
+            updatedAt: (data["updatedAt"] as? Timestamp)?.dateValue() ?? Date(),
+            engagement: .empty
+        )
+    }
+}
+
+enum FirestoreError: Error {
+    case invalidDocument
+    case missingRequiredFields
 } 

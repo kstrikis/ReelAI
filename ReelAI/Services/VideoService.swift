@@ -35,11 +35,9 @@ final class VideoService {
         return Future { promise in
             Task {
                 do {
-                    Log.p(Log.firebase, Log.save, "Creating Firestore document for video")
                     let docRef = self.db.collection("videos").document()
                     let videoId = docRef.documentID
                     
-                    // Create initial video object without media URL
                     let video = Video(
                         id: videoId,
                         ownerId: userId,
@@ -51,13 +49,18 @@ final class VideoService {
                         engagement: .empty
                     )
                     
-                    try await docRef.setData(from: video)
-                    Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId)")
-                    
-                    // Return both the video object and the ID for use in upload
-                    promise(.success((video, videoId)))
+                    // Use proper async/await with error handling
+                    do {
+                        let encoder = Firestore.Encoder()
+                        let data = try encoder.encode(video)
+                        try await docRef.setData(data)
+                        Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId)")
+                        promise(.success((video, videoId)))
+                    } catch {
+                        throw error
+                    }
                 } catch {
-                    Log.p(Log.firebase, Log.save, Log.error, "Failed to create video document: \(error.localizedDescription)")
+                    Log.p(Log.firebase, Log.save, Log.error, "Failed to create video: \(error)")
                     promise(.failure(error))
                 }
             }
