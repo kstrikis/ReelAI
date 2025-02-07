@@ -538,8 +538,10 @@ class DebugViewModel: ObservableObject {
                        let username = userData["username"] as? String {
                         // Delete associated username document if it exists
                         try? await db.collection("usernames").document(username).delete()
+                        Log.p(Log.debug_cleanup, Log.clean, "Deleted username document for user \(userId)")
                     }
                     try await db.document(result.path).delete()
+                    Log.p(Log.debug_cleanup, Log.clean, "Deleted user document \(userId)")
                     
                 case .orphanedUsername, .invalidUsername:
                     try await db.document(result.path).delete()

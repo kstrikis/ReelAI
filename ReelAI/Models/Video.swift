@@ -37,10 +37,11 @@ struct Video: Codable, Identifiable {
 
 // Extension for Firestore conversion
 extension Video {
-    init?(document: QueryDocumentSnapshot) {
-        let data = document.data()
+    init?(document: DocumentSnapshot) {
+        let data = document.data() ?? [:]
         
-        guard let ownerId = data["ownerId"] as? String,
+        guard let id = data["id"] as? String,
+              let ownerId = data["ownerId"] as? String,
               let username = data["username"] as? String,
               let title = data["title"] as? String,
               let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
@@ -48,7 +49,7 @@ extension Video {
             return nil
         }
         
-        self.id = document.documentID
+        self.id = id
         self.ownerId = ownerId
         self.username = username
         self.title = title
@@ -71,12 +72,13 @@ extension Video {
     
     var asFirestoreData: [String: Any] {
         return [
+            "id": id,
             "ownerId": ownerId,
             "username": username,
             "title": title,
             "description": description as Any,
-            "createdAt": FieldValue.serverTimestamp(),
-            "updatedAt": FieldValue.serverTimestamp(),
+            "createdAt": createdAt,
+            "updatedAt": updatedAt,
             "engagement": [
                 "viewCount": engagement.viewCount,
                 "likeCount": engagement.likeCount,

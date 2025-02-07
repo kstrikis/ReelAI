@@ -655,7 +655,8 @@ final class FirestoreService {
 
             if !doc.exists {
                 // No document, so we create!
-                let storageRef = Storage.storage().reference().child("videos/\(videoId).mp4")
+                // Use the correct path structure: videos/{ownerId}/{videoId}.mp4
+                let storageRef = Storage.storage().reference().child("videos/\(videoData.ownerId)/\(videoId).mp4")
                 guard let placeholderName = placeholderFiles[videoId],
                       let localVideoURL = Bundle.main.url(forResource: placeholderName, withExtension: "mp4") else {
                     Log.p(Log.firebase, Log.read, Log.error, "Failed to locate placeholder video for \(videoData.title)")
@@ -665,14 +666,25 @@ final class FirestoreService {
                 do {
                     //Upload the local video file first
                     _ = try await storageRef.putFileAsync(from: localVideoURL)
-                    Log.p(Log.firebase, Log.read, "Video \(videoId) uploaded to Firebase Storage.")
+                    Log.p(Log.firebase, Log.read, "Video \(videoId) uploaded to Firebase Storage at path: videos/\(videoData.ownerId)/\(videoId).mp4")
 
                     //And then save to Firestore
-                    try await videoRef.setData(from: videoData)
+                    try await videoRef.setData(videoData.asFirestoreData)
                     Log.p(Log.firebase, Log.read, "Video metadata saved to Firestore for \(videoId).")
+                    
+                    // Verify the document was created correctly
+                    let verifyDoc = try await videoRef.getDocument()
+                    if let _ = Video(document: verifyDoc) {
+                        Log.p(Log.firebase, Log.read, Log.success, "Successfully verified video document for \(videoId)")
+                    } else {
+                        Log.p(Log.firebase, Log.read, Log.error, "Failed to verify video document for \(videoId). Document exists but cannot be decoded.")
+                    }
                 }
                 catch {
                     Log.p(Log.firebase, Log.read, Log.error, "Error uploading video: \(error)")
+                    if let firestoreError = error as? FirestoreError {
+                        Log.p(Log.firebase, Log.read, Log.error, "Firestore error: \(firestoreError)")
+                    }
                 }
             }
         }

@@ -152,10 +152,11 @@ class UnifiedVideoHandler: ObservableObject {
         // Use modulo to wrap the index.  This is the core of infinite scrolling.
         let wrappedIndex = newIndex % videos.count
 
-        Log.p(Log.video, Log.event, "Handling index change to \(newIndex). Wrapped index: \(wrappedIndex)")
+        Log.p(Log.video, Log.event, "Index change - Raw: \(newIndex), Wrapped: \(wrappedIndex), Total Videos: \(videos.count)")
 
         // Pause *all* players.
         preloadedPlayers.values.forEach { $0.pause() }
+        Log.p(Log.video, Log.event, "Paused all active players")
 
         // Update current index to the *wrapped* index.
         currentIndex = wrappedIndex
@@ -168,7 +169,7 @@ class UnifiedVideoHandler: ObservableObject {
             player.seek(to: CMTime.zero)
             player.play()
         } else {
-            Log.p(Log.video, Log.event, "Preloading the current video as we did not find it: \(id)")
+            Log.p(Log.video, Log.event, "Preloading current video as not found: \(id)")
             preloadVideo(currentVideo)
         }
 
@@ -176,6 +177,8 @@ class UnifiedVideoHandler: ObservableObject {
         let adjacentIndices = [wrappedIndex - 1, wrappedIndex + 1]
             .map { $0 % videos.count }  // Wrap adjacent indices too
             .filter { $0 >= 0 && $0 < videos.count } // Ensure within bounds
+        
+        Log.p(Log.video, Log.event, "Preloading adjacent indices: \(adjacentIndices)")
 
         for index in adjacentIndices {
             let video = videos[index]
@@ -188,6 +191,7 @@ class UnifiedVideoHandler: ObservableObject {
 
         //Pagination check: Load more if near the end.
         if wrappedIndex >= videos.count - 2 {
+            Log.p(Log.video, Log.event, "Near end of videos, triggering pagination")
             loadMoreVideos()
         }
     }
@@ -292,6 +296,8 @@ struct PageView<Content: View>: View {
                         .onEnded { gesture in
                             let height = geometry.size.height
                             let offset = gesture.translation.height
+                            
+                            Log.p(Log.video, Log.event, "Drag metrics - Height: \(String(format: "%.2f", height)), Offset: \(String(format: "%.2f", offset)), Threshold: \(String(format: "%.2f", height * 0.3))")
 
                             // Determine direction and calculate new index
                             let newIndex: Int
@@ -299,11 +305,14 @@ struct PageView<Content: View>: View {
                                 newIndex = offset > 0 ?
                                     max(currentIndex - 1, 0) :
                                     min(currentIndex + 1, pages.count - 1)
+                                Log.p(Log.video, Log.event, "Scroll threshold met - Direction: \(offset > 0 ? "up" : "down"), New Index: \(newIndex)")
                             } else {
                                 newIndex = currentIndex
+                                Log.p(Log.video, Log.event, "Scroll threshold not met - Staying at index: \(currentIndex)")
                             }
 
                             withAnimation {
+                                Log.p(Log.video, Log.event, "Initiating scroll - From: \(currentIndex), To: \(newIndex), Total Pages: \(pages.count)")
                                 proxy.scrollTo(newIndex, anchor: .center)
                                 if newIndex != currentIndex {
                                     UnifiedVideoHandler.shared.handleIndexChange(newIndex)

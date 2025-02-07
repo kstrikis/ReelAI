@@ -107,17 +107,11 @@ class VideoListViewModel: ObservableObject {
                 Log.p(Log.firebase, Log.read, Log.success, "Received \(querySnapshot.documents.count) videos")
                 return querySnapshot.documents.compactMap { document in
                     do {
-                        let video = try document.data(as: Video.self)
-                        return Video(
-                            id: document.documentID,
-                            ownerId: video.ownerId,
-                            username: video.username,
-                            title: video.title,
-                            description: video.description,
-                            createdAt: video.createdAt,
-                            updatedAt: video.updatedAt,
-                            engagement: video.engagement
-                        )
+                        if let video = Video(document: document) {
+                            return video
+                        }
+                        Log.p(Log.firebase, Log.read, Log.error, "Failed to decode video document")
+                        return nil
                     } catch {
                         Log.p(Log.firebase, Log.read, Log.error, "Error decoding video document: \(error.localizedDescription)")
                         return nil
