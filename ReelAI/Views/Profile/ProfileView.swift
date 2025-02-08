@@ -14,9 +14,13 @@ struct ProfileView: View {
     var body: some View {
         NavigationView {
             ZStack {
-                // Background
-                Color.black.ignoresSafeArea()
-
+                // Force full width background
+                Rectangle()
+                    .fill(Color.clear)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(SpaceBackground())
+                    .ignoresSafeArea()
+                
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 20) {
                         // Profile Image (placeholder for now)
@@ -94,7 +98,10 @@ struct ProfileView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button(action: { dismiss() }, label: {
+                    Button(action: { 
+                        Log.p(Log.user, Log.event, "User dismissed profile view")
+                        dismiss() 
+                    }, label: {
                         Text("Done")
                             .foregroundColor(.white)
                     })
@@ -107,24 +114,37 @@ struct ProfileView: View {
                     })
                 }
             }
-            .toolbarBackground(Color.black, for: .navigationBar)
+            .toolbarBackground(Color.clear, for: .navigationBar)
             .toolbarBackground(.visible, for: .navigationBar)
         }
-        .onAppear(perform: setupInitialValues)
+        .navigationViewStyle(.stack)
+        .onAppear {
+            Log.p(Log.user, Log.start, "Profile view appeared")
+            setupInitialValues()
+        }
+        .onDisappear {
+            Log.p(Log.user, Log.exit, "Profile view disappeared")
+        }
     }
 
     private func setupInitialValues() {
         if let profile = authService.userProfile {
+            Log.p(Log.user, Log.read, "Loading initial profile values")
             displayName = profile.displayName
             username = profile.username
+        } else {
+            Log.p(Log.user, Log.read, Log.warning, "No profile available to load")
         }
     }
 
     private func toggleEditMode() {
         withAnimation {
             if isEditing {
+                Log.p(Log.user, Log.event, "User cancelled profile editing")
                 // Reset values when canceling
                 setupInitialValues()
+            } else {
+                Log.p(Log.user, Log.event, "User started profile editing")
             }
             isEditing.toggle()
             errorMessage = nil
@@ -132,12 +152,12 @@ struct ProfileView: View {
     }
 
     private func saveProfile() {
-        AppLogger.dbEntry("Starting profile update", collection: "users")
+        Log.p(Log.user, Log.save, "Starting profile update")
         isLoading = true
         errorMessage = nil
 
         guard let userId = Auth.auth().currentUser?.uid else {
-            AppLogger.dbError("No authenticated user found", error: NSError(), collection: "users")
+            Log.p(Log.user, Log.save, Log.error, "No authenticated user found")
             errorMessage = "Not authenticated"
             isLoading = false
             return
@@ -152,6 +172,10 @@ struct ProfileView: View {
             createdAt: authService.userProfile?.createdAt ?? Date()
         )
 
+        Log.p(Log.user, Log.save, "Updating profile for user: \(userId)")
+        Log.p(Log.user, Log.save, "New display name: \(displayName)")
+        Log.p(Log.user, Log.save, "New username: \(username)")
+
         // Update profile in Firestore
         FirestoreService.shared.updateUserProfile(updatedProfile, userId: userId)
             .timeout(10, scheduler: DispatchQueue.main) // Add timeout
@@ -162,16 +186,17 @@ struct ProfileView: View {
                     
                     switch completion {
                     case .finished:
-                        AppLogger.dbSuccess("Profile updated successfully", collection: "users")
+                        Log.p(Log.user, Log.save, Log.success, "Profile updated successfully")
                         // Update local profile immediately for better UX
                         authService.updateLocalProfile(updatedProfile)
                         isEditing = false
                         
                     case .failure(let error):
-                        AppLogger.dbError("Failed to update profile", error: error, collection: "users")
                         if (error as NSError).domain == NSPOSIXErrorDomain && (error as NSError).code == 50 {
+                            Log.p(Log.user, Log.save, Log.error, "Network connection lost")
                             errorMessage = "Network connection lost. Please check your internet connection and try again."
                         } else {
+                            Log.p(Log.user, Log.save, Log.error, "Failed to update profile: \(error.localizedDescription)")
                             errorMessage = "Failed to update profile: \(error.localizedDescription)"
                         }
                     }

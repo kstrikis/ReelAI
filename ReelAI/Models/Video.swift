@@ -7,10 +7,16 @@ struct Video: Codable, Identifiable {
     let username: String
     let title: String
     let description: String?
-    let mediaUrl: String
     let createdAt: Date
     let updatedAt: Date
     let engagement: Engagement
+    
+    var computedMediaUrl: String {
+        let bucket = "reelai-53f8b.firebasestorage.app"
+        let path = "videos/\(ownerId)/\(id).mp4"
+        let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+        return "https://firebasestorage.googleapis.com/v0/b/\(bucket)/o/\(encodedPath)?alt=media"
+    }
     
     struct Engagement: Codable {
         let viewCount: Int
@@ -31,24 +37,23 @@ struct Video: Codable, Identifiable {
 
 // Extension for Firestore conversion
 extension Video {
-    init?(document: QueryDocumentSnapshot) {
-        let data = document.data()
+    init?(document: DocumentSnapshot) {
+        let data = document.data() ?? [:]
         
-        guard let ownerId = data["ownerId"] as? String,
+        guard let id = data["id"] as? String,
+              let ownerId = data["ownerId"] as? String,
               let username = data["username"] as? String,
               let title = data["title"] as? String,
-              let mediaUrl = data["mediaUrl"] as? String,
               let createdAt = (data["createdAt"] as? Timestamp)?.dateValue()
         else {
             return nil
         }
         
-        self.id = document.documentID
+        self.id = id
         self.ownerId = ownerId
         self.username = username
         self.title = title
         self.description = data["description"] as? String
-        self.mediaUrl = mediaUrl
         self.createdAt = createdAt
         self.updatedAt = (data["updatedAt"] as? Timestamp)?.dateValue() ?? createdAt
         
@@ -67,13 +72,13 @@ extension Video {
     
     var asFirestoreData: [String: Any] {
         return [
+            "id": id,
             "ownerId": ownerId,
             "username": username,
             "title": title,
             "description": description as Any,
-            "mediaUrl": mediaUrl,
-            "createdAt": FieldValue.serverTimestamp(),
-            "updatedAt": FieldValue.serverTimestamp(),
+            "createdAt": createdAt,
+            "updatedAt": updatedAt,
             "engagement": [
                 "viewCount": engagement.viewCount,
                 "likeCount": engagement.likeCount,

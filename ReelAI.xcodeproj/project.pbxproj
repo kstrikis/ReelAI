@@ -38,22 +38,9 @@
 		20690A512D513E11007F3A9B /* ReelAIUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ReelAIUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		203DF53A2D542A8400BBB292 /* Exceptions for "ReelAI" folder in "ReelAI" target */ = {
-			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
-			membershipExceptions = (
-				Info.plist,
-			);
-			target = 20690A362D513E0F007F3A9B /* ReelAI */;
-		};
-/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
-
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		20690A392D513E0F007F3A9B /* ReelAI */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-				203DF53A2D542A8400BBB292 /* Exceptions for "ReelAI" folder in "ReelAI" target */,
-			);
 			path = ReelAI;
 			sourceTree = "<group>";
 		};
@@ -436,7 +423,6 @@
 				DEVELOPMENT_TEAM = JT43SMUL3F;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = ReelAI/Info.plist;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We record camera video and audio when you record your own clips.";
 				INFOPLIST_KEY_NSMicrophoneUsageDescription = "We need this for your recordings.";
 				INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription = "To save to your photo library";
@@ -497,11 +483,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = JT43SMUL3F;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We record audio and video when you choose to record your own clip.";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.kstrikis.ReelAITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edgineer.ReelAITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -516,11 +503,12 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = JT43SMUL3F;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCameraUsageDescription = "We record audio and video when you choose to record your own clip.";
 				IPHONEOS_DEPLOYMENT_TARGET = 18.2;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.kstrikis.ReelAITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edgineer.ReelAITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_VERSION = 5.0;
@@ -534,10 +522,11 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = JT43SMUL3F;
 				FRAMEWORK_SEARCH_PATHS = "$(PLATFORM_DIR)/Developer/Library/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.kstrikis.ReelAIUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edgineer.ReelAIUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_INCLUDE_PATHS = "$(PLATFORM_DIR)/Developer/usr/lib";
@@ -552,10 +541,11 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = JT43SMUL3F;
 				FRAMEWORK_SEARCH_PATHS = "$(PLATFORM_DIR)/Developer/Library/Frameworks";
 				GENERATE_INFOPLIST_FILE = YES;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.kstrikis.ReelAIUITests;
+				PRODUCT_BUNDLE_IDENTIFIER = com.edgineer.ReelAIUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
 				SWIFT_INCLUDE_PATHS = "$(PLATFORM_DIR)/Developer/usr/lib";

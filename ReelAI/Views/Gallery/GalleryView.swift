@@ -12,6 +12,7 @@ struct GalleryView: View {
     @EnvironmentObject private var authService: AuthenticationService
 
     init(authService: AuthenticationService) {
+        Log.p(Log.video, Log.start, "Initializing GalleryView")
         _viewModel = StateObject(wrappedValue: GalleryViewModel(authService: authService))
     }
 
@@ -28,17 +29,17 @@ struct GalleryView: View {
                             videoURL: videoURL,
                             thumbnail: viewModel.thumbnails[videoURL],
                             onTap: {
-                                print("🎥 Opening video player for: \(videoURL.path)")
+                                Log.p(Log.video, Log.event, "Opening video player for: \(videoURL.path)")
                                 selectedVideo = videoURL
                                 isVideoPlayerPresented = true
                             },
                             onPublish: {
-                                print("🎥 Opening publisher for: \(videoURL.path)")
+                                Log.p(Log.video, Log.event, "Opening publisher for: \(videoURL.path)")
                                 selectedVideo = videoURL
                                 showingPublisher = true
                             },
                             onDelete: {
-                                print("🎥 Deleting video at: \(videoURL.path)")
+                                Log.p(Log.video, Log.delete, "Deleting video at: \(videoURL.path)")
                                 Task {
                                     await viewModel.deleteVideo(at: videoURL)
                                 }
@@ -67,6 +68,7 @@ struct GalleryView: View {
             }
             .onChange(of: isVideoPlayerPresented) { newValue in
                 if !newValue {
+                    Log.p(Log.video, Log.event, "Video player dismissed")
                     selectedVideo = nil
                 }
             }
@@ -75,13 +77,14 @@ struct GalleryView: View {
                     // Clean up temporary file if it exists
                     if let url = selectedVideo,
                        url.path.contains(FileManager.default.temporaryDirectory.path) {
-                        print("🎥 🧹 Cleaning up temporary video file")
+                        Log.p(Log.storage, Log.delete, "Cleaning up temporary video file")
                         try? FileManager.default.removeItem(at: url)
                     }
                     selectedVideo = nil
                 }
             }
             .onAppear {
+                Log.p(Log.video, Log.start, "Loading gallery videos")
                 viewModel.loadVideos()
             }
         }
@@ -115,12 +118,13 @@ struct VideoThumbnailView: View {
         }
         .contextMenu {
             Button(action: {
-                print("🎥 🔄 GALLERY - Opening publisher")
-                print("🎥 🔄 GALLERY - Video URL type: \(type(of: videoURL))")
-                print("🎥 🔄 GALLERY - Video URL scheme: \(videoURL.scheme ?? "nil")")
-                print("🎥 🔄 GALLERY - Is file URL: \(videoURL.isFileURL)")
-                print("🎥 🔄 GALLERY - Full URL: \(videoURL)")
-                print("🎥 🔄 GALLERY - Path: \(videoURL.path)")
+                Log.p(Log.video, Log.event, "Opening publisher from gallery")
+                Log.p(Log.video, Log.event, "Video details:")
+                Log.p(Log.video, Log.event, "- URL type: \(type(of: videoURL))")
+                Log.p(Log.video, Log.event, "- URL scheme: \(videoURL.scheme ?? "nil")")
+                Log.p(Log.video, Log.event, "- Is file URL: \(videoURL.isFileURL)")
+                Log.p(Log.video, Log.event, "- Full URL: \(videoURL)")
+                Log.p(Log.video, Log.event, "- Path: \(videoURL.path)")
                 onPublish()
             }) {
                 Label("Send to Publisher", systemImage: "square.and.arrow.up")
@@ -162,17 +166,17 @@ struct VideoPlayerView: View {
                     VideoPlayer(player: player)
                         .frame(width: geometry.size.width, height: geometry.size.height)
                         .onAppear {
-                            print("🎥 ▶️ Starting video playback")
+                            Log.p(Log.video, Log.start, "Starting video playback")
                             player.play()
                         }
                         .onDisappear {
-                            print("🎥 ⏹️ Stopping video playback")
+                            Log.p(Log.video, Log.stop, "Stopping video playback")
                             player.pause()
                         }
                 }
 
                 Button(action: {
-                    print("🎥 🚪 Closing video player")
+                    Log.p(Log.video, Log.event, "User closed video player")
                     presentationMode.wrappedValue.dismiss()
                 }) {
                     Image(systemName: "xmark.circle.fill")
@@ -184,13 +188,13 @@ struct VideoPlayerView: View {
             }
         }
         .onAppear {
-            print("🎥 🎬 VideoPlayerView initialized with URL: \(videoURL.absoluteString)")
+            Log.p(Log.video, Log.start, "VideoPlayerView initialized with URL: \(videoURL.absoluteString)")
             loadVideo()
         }
     }
 
     private func loadVideo() {
-        print("🎥 🔄 Starting video load process")
+        Log.p(Log.video, Log.start, "Starting video load process")
         isLoading = true
         loadError = nil
 
@@ -199,7 +203,7 @@ struct VideoPlayerView: View {
         options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
 
         let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
-        print("🎥 🔍 Searching for matching video asset...")
+        Log.p(Log.video, Log.read, "Searching for matching video asset")
 
         var foundAsset: PHAsset?
         fetchResult.enumerateObjects { asset, _, stop in
@@ -226,13 +230,13 @@ struct VideoPlayerView: View {
         }
 
         guard let asset = foundAsset else {
-            print("❌ 🚫 Could not find matching video asset")
+            Log.p(Log.video, Log.read, Log.error, "Could not find matching video asset")
             loadError = "Could not find video in Photos library"
             isLoading = false
             return
         }
 
-        print("🎥 ✅ Found matching video asset")
+        Log.p(Log.video, Log.read, Log.success, "Found matching video asset")
 
         // Now request the playable asset
         let videoOptions = PHVideoRequestOptions()
@@ -240,7 +244,7 @@ struct VideoPlayerView: View {
         videoOptions.deliveryMode = .highQualityFormat
         videoOptions.isNetworkAccessAllowed = true
 
-        print("🎥 🔍 Requesting playable video asset...")
+        Log.p(Log.video, Log.read, "Requesting playable video asset")
 
         Task { @MainActor in
             do {
@@ -250,62 +254,66 @@ struct VideoPlayerView: View {
                         options: videoOptions
                     ) { avAsset, _, info in
                         if let error = info?[PHImageErrorKey] as? Error {
+                            Log.p(Log.video, Log.read, Log.error, "Failed to load video asset: \(error.localizedDescription)")
                             continuation.resume(throwing: error)
                         } else if let avAsset {
+                            Log.p(Log.video, Log.read, Log.success, "Successfully loaded video asset")
                             continuation.resume(returning: avAsset)
                         } else {
+                            Log.p(Log.video, Log.read, Log.error, "No video asset returned")
                             continuation.resume(throwing: NSError(domain: "", code: -1,
-                                                                  userInfo: [NSLocalizedDescriptionKey: "Failed to load video asset"]))
+                                                               userInfo: [NSLocalizedDescriptionKey: "Failed to load video asset"]))
                         }
                     }
                 }
 
-                print("🎥 ✅ Received playable video asset")
+                Log.p(Log.video, Log.event, "Received playable video asset")
 
                 // Preload the asset first
-                print("🎥 🔍 Preloading asset...")
+                Log.p(Log.video, Log.read, "Preloading asset keys")
                 let assetKeys = ["playable", "tracks", "duration"]
                 for key in assetKeys {
-                    print("🎥 🔍 Loading asset key: \(key)")
+                    Log.p(Log.video, Log.read, "Loading asset key: \(key)")
                     _ = try await avAsset.loadValues(forKeys: [key])
-                    print("🎥 ✅ Loaded asset key: \(key)")
+                    Log.p(Log.video, Log.read, Log.success, "Loaded asset key: \(key)")
                 }
 
                 // Verify the asset is playable
                 guard avAsset.isPlayable else {
+                    Log.p(Log.video, Log.read, Log.error, "Video is not playable")
                     throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Video is not playable"])
                 }
-                print("🎥 ✅ Asset is playable")
+                Log.p(Log.video, Log.read, Log.success, "Asset is playable")
 
                 // Create player item
-                print("🎥 ⚙️ Creating player item...")
+                Log.p(Log.video, Log.event, "Creating player item")
                 let playerItem = AVPlayerItem(asset: avAsset)
 
-                // Create and set the player immediately
-                print("🎥 ⚙️ Creating player...")
+                // Create and set the player
+                Log.p(Log.video, Log.event, "Creating player")
                 player = AVPlayer(playerItem: playerItem)
-                print("🎥 ✅ Video loaded successfully")
                 isLoading = false
+                Log.p(Log.video, Log.event, Log.success, "Video player ready")
 
                 // Monitor player item status for debugging
                 let observation = playerItem.observe(\.status) { item, _ in
-                    print("🎥 📊 Player item status changed to: \(item.status.rawValue)")
+                    Log.p(Log.video, Log.event, "Player item status changed to: \(item.status.rawValue)")
                     if let error = item.error {
-                        print("❌ 💥 Player item error: \(error.localizedDescription)")
+                        Log.p(Log.video, Log.event, Log.error, "Player item error: \(error.localizedDescription)")
                     }
                 }
                 // Keep observation alive
                 _ = observation
 
             } catch {
-                print("❌ 💥 Failed to load video: \(error.localizedDescription)")
+                Log.p(Log.video, Log.event, Log.error, "Failed to load video: \(error.localizedDescription)")
                 if let nsError = error as NSError? {
-                    print("❌ 💥 Error details:")
-                    print("  - Domain: \(nsError.domain)")
-                    print("  - Code: \(nsError.code)")
-                    print("  - Description: \(nsError.localizedDescription)")
+                    Log.p(Log.video, Log.event, Log.error, "Error details:")
+                    Log.p(Log.video, Log.event, Log.error, "  - Domain: \(nsError.domain)")
+                    Log.p(Log.video, Log.event, Log.error, "  - Code: \(nsError.code)")
+                    Log.p(Log.video, Log.event, Log.error, "  - Description: \(nsError.localizedDescription)")
                 }
-                loadError = "Failed to load video: \(error.localizedDescription)"
+                loadError = error.localizedDescription
                 isLoading = false
             }
         }
@@ -324,18 +332,18 @@ class GalleryViewModel: ObservableObject {
     }
 
     func loadVideos() {
-        print("🖼️ 🔄 Loading all videos from storage")
+        Log.p(Log.video, Log.start, "Loading all videos from storage")
         videos = localVideoService.getAllVideos()
-        print("🖼️ 📝 Found \(videos.count) videos")
+        Log.p(Log.video, Log.read, "Found \(videos.count) videos")
 
         for videoURL in videos {
             loadThumbnail(for: videoURL)
         }
-        print("🖼️ ✅ Initiated thumbnail loading for all videos")
+        Log.p(Log.video, Log.event, "Initiated thumbnail loading for all videos")
     }
 
     private func loadThumbnail(for videoURL: URL) {
-        print("🖼️ 🖼️ Loading thumbnail for \(videoURL.lastPathComponent)")
+        Log.p(Log.video, Log.start, "Loading thumbnail for \(videoURL.lastPathComponent)")
         Task { @MainActor in
             // Add a small delay to ensure the video file is fully written
             try? await Task.sleep(nanoseconds: 500_000_000) // 0.5 second delay
@@ -345,18 +353,18 @@ class GalleryViewModel: ObservableObject {
                     .async()
                 if let thumbnail {
                     thumbnails[videoURL] = thumbnail
-                    print("🖼️ ✅ Successfully loaded thumbnail for \(videoURL.lastPathComponent)")
+                    Log.p(Log.video, Log.event, "Successfully loaded thumbnail for \(videoURL.lastPathComponent)")
                 } else {
-                    print("❌ 🚫 Failed to generate thumbnail for \(videoURL.lastPathComponent)")
+                    Log.p(Log.video, Log.read, Log.error, "Failed to generate thumbnail for \(videoURL.lastPathComponent)")
                 }
             } catch {
-                print("❌ 💥 Thumbnail generation error: \(error.localizedDescription)")
+                Log.p(Log.video, Log.read, Log.error, "Thumbnail generation error: \(error.localizedDescription)")
             }
         }
     }
 
     func deleteVideo(at url: URL) async {
-        print("🖼️ 🗑️ Starting video deletion process for: \(url.path)")
+        Log.p(Log.video, Log.start, "Starting video deletion process for: \(url.path)")
         
         do {
             try await localVideoService.deleteVideo(at: url)
@@ -369,11 +377,11 @@ class GalleryViewModel: ObservableObject {
                 // Remove thumbnail
                 thumbnails.removeValue(forKey: url)
             }
-            print("🖼️ ✅ Successfully deleted video and updated UI")
+            Log.p(Log.video, Log.event, "Successfully deleted video and updated UI")
         } catch {
-            print("❌ 💥 Failed to delete video: \(error.localizedDescription)")
-            print("  - File path: \(url.path)")
-            print("  - Error details: \(error)")
+            Log.p(Log.video, Log.event, Log.error, "Failed to delete video: \(error.localizedDescription)")
+            Log.p(Log.video, Log.read, Log.error, "  - File path: \(url.path)")
+            Log.p(Log.video, Log.read, Log.error, "  - Error details: \(error)")
         }
     }
 }

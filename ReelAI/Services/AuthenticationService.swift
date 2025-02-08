@@ -61,15 +61,15 @@ final class AuthenticationService: ObservableObject {
     // MARK: - Initialization
 
     init() {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.auth, Log.start, "Setting up authentication service")
         setupAuthStateHandler()
-        AppLogger.methodExit(AppLogger.auth)
+        Log.p(Log.auth, Log.exit, "Authentication service setup complete")
     }
 
     // MARK: - Auth State Handling
 
     private func setupAuthStateHandler() {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.auth_session, Log.start, "Setting up auth state handler")
 
         Auth.auth().authStateDidChangePublisher()
             .receive(on: DispatchQueue.main)
@@ -77,7 +77,7 @@ final class AuthenticationService: ObservableObject {
                 guard let self else { return }
 
                 if let user = auth {
-                    AppLogger.debug("👤 User signed in: \(user.uid)")
+                    Log.p(Log.auth_session, Log.event, "User signed in: \(user.uid)")
                     print("👤 Firebase auth state changed - User signed in: \(user.uid)")
                     authState = .signedIn(user)
 
@@ -88,7 +88,7 @@ final class AuthenticationService: ObservableObject {
                         .sink { completion in
                             if case let .failure(error) = completion {
                                 print("❌ Failed to fetch user profile: \(error.localizedDescription)")
-                                AppLogger.error(AppLogger.auth, error, context: "Fetch user profile")
+                                Log.p(Log.auth, Log.event, Log.error, "Failed to fetch user profile: \(error.localizedDescription)")
                             }
                         } receiveValue: { [weak self] snapshot in
                             if let profile = try? snapshot.data(as: UserProfile.self) {
@@ -96,7 +96,7 @@ final class AuthenticationService: ObservableObject {
                                 print("✅ User profile loaded successfully:")
                                 print("  - Username: \(profile.username)")
                                 print("  - Display Name: \(profile.displayName)")
-                                AppLogger.debug("👤 User profile fetched: \(profile.displayName)")
+                                Log.p(Log.auth, Log.read, "User profile fetched: \(profile.displayName)")
                             } else {
                                 print("⚠️ No valid profile found for user: \(user.uid)")
                             }
@@ -104,14 +104,14 @@ final class AuthenticationService: ObservableObject {
                         .store(in: &cancellables)
                 } else {
                     print("👤 Firebase auth state changed - User signed out")
-                    AppLogger.debug("👤 User signed out")
+                    Log.p(Log.auth_session, Log.event, "User signed out")
                     authState = .signedOut
                     userProfile = nil // Clear profile when signed out
                 }
             }
             .store(in: &cancellables)
 
-        AppLogger.methodExit(AppLogger.auth)
+        Log.p(Log.auth_session, Log.exit, "Auth state handler setup complete")
     }
 
     // MARK: - User Profile Methods
@@ -119,32 +119,32 @@ final class AuthenticationService: ObservableObject {
     /// Updates the local user profile
     /// - Parameter profile: The new profile to set
     func updateLocalProfile(_ profile: UserProfile) {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.auth, Log.start, "Updating local user profile")
         userProfile = profile
-        AppLogger.methodExit(AppLogger.auth)
+        Log.p(Log.auth, Log.exit, "Local user profile updated")
     }
 
     /// Fetches the user's profile from Firestore
     /// - Parameter userId: The user's Firebase Auth UID
     private func fetchUserProfile(userId: String) {
-        AppLogger.methodEntry(AppLogger.auth, params: ["userId": userId])
+        Log.p(Log.auth, Log.read, "Fetching user profile: \(userId)")
 
         database.collection("users").document(userId)
             .snapshotPublisher()
             .receive(on: DispatchQueue.main)
             .sink { completion in
                 if case let .failure(error) = completion {
-                    AppLogger.error(AppLogger.auth, error, context: "Fetch user profile")
+                    Log.p(Log.auth, Log.event, Log.error, "Failed to fetch user profile: \(error.localizedDescription)")
                 }
             } receiveValue: { [weak self] snapshot in
                 if let profile = try? snapshot.data(as: UserProfile.self) {
                     self?.userProfile = profile
-                    AppLogger.debug("👤 User profile fetched: \(profile.displayName)")
+                    Log.p(Log.auth, Log.read, "User profile fetched: \(profile.displayName)")
                 }
             }
             .store(in: &cancellables)
 
-        AppLogger.methodExit(AppLogger.auth)
+        Log.p(Log.auth, Log.exit, "Profile fetch initiated")
     }
 
     /// Username validation rules
@@ -172,7 +172,7 @@ final class AuthenticationService: ObservableObject {
     /// - Parameter username: The username to validate
     /// - Returns: Result indicating if username is valid, with error if not
     private func validateUsername(_ username: String) -> Result<String, UsernameValidationError> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["username": username])
+        Log.p(Log.auth, Log.start, "Validating username")
         
         // Check length
         guard username.count >= 3 else {
@@ -200,11 +200,11 @@ final class AuthenticationService: ObservableObject {
     /// - Parameter profile: The profile data to save
     /// - Returns: A publisher that emits when the operation completes or errors
     func updateProfile(_ profile: UserProfile) -> AnyPublisher<Void, Error> {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.auth, Log.start, "Updating user profile")
 
         guard let userId = currentUser?.uid else {
             let error = NSError(
-                domain: "com.kstrikis.ReelAI",
+                domain: "com.edgineer.ReelAI",
                 code: -1,
                 userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
             )
@@ -230,18 +230,36 @@ final class AuthenticationService: ObservableObject {
                         return self.updateProfileInFirestore(profile, userId: userId)
                     }
                     return Fail(error: NSError(
-                        domain: "com.kstrikis.ReelAI",
+                        domain: "com.edgineer.ReelAI",
                         code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "Username is already taken"]
                     )).eraseToAnyPublisher()
                 }
                 
-                // Username is available, reserve it and update profile
-                return self.reserveUsername(profile.username)
-                    .flatMap { _ in
-                        self.updateProfileInFirestore(profile, userId: userId)
-                    }
-                    .eraseToAnyPublisher()
+                // Username is available, handle the update process
+                if let currentProfile = self.userProfile,
+                   currentProfile.username != profile.username {
+                    // Delete old username document first
+                    return self.database.collection("usernames")
+                        .document(currentProfile.username)
+                        .delete()
+                        .flatMap { _ -> AnyPublisher<Void, Error> in
+                            // Then reserve new username and update profile
+                            return self.reserveUsername(profile.username)
+                                .flatMap { _ in
+                                    self.updateProfileInFirestore(profile, userId: userId)
+                                }
+                                .eraseToAnyPublisher()
+                        }
+                        .eraseToAnyPublisher()
+                } else {
+                    // No username change or no previous username, just reserve and update
+                    return self.reserveUsername(profile.username)
+                        .flatMap { _ in
+                            self.updateProfileInFirestore(profile, userId: userId)
+                        }
+                        .eraseToAnyPublisher()
+                }
             }
             .eraseToAnyPublisher()
     }
@@ -252,15 +270,15 @@ final class AuthenticationService: ObservableObject {
             do {
                 try self.database.collection("users").document(userId).setData(from: profile) { error in
                     if let error {
-                        AppLogger.error(AppLogger.auth, error, context: "Update user profile")
+                        Log.p(Log.auth, Log.event, Log.error, "Failed to update user profile: \(error.localizedDescription)")
                         promise(.failure(error))
                     } else {
-                        AppLogger.debug("👤 User profile updated successfully")
+                        Log.p(Log.auth, Log.event, "User profile updated successfully")
                         promise(.success(()))
                     }
                 }
             } catch {
-                AppLogger.error(AppLogger.auth, error, context: "Update user profile encoding")
+                Log.p(Log.auth, Log.event, Log.error, "Failed to encode user profile: \(error.localizedDescription)")
                 promise(.failure(error))
             }
         }
@@ -272,7 +290,7 @@ final class AuthenticationService: ObservableObject {
     /// - Parameter base: Base string to generate username from (e.g., email prefix or display name)
     /// - Returns: A publisher that emits a unique username or an error
     private func generateUniqueUsername(from base: String) -> AnyPublisher<String, Error> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["base": base])
+        Log.p(Log.auth, Log.start, "Generating unique username from base: \(base)")
 
         // Remove special characters and spaces, convert to lowercase
         let sanitizedBase = base.lowercased()
@@ -298,7 +316,7 @@ final class AuthenticationService: ObservableObject {
     /// - Parameter username: Username to check
     /// - Returns: A publisher that emits true if available, false if taken
     private func checkUsernameAvailability(_ username: String) -> AnyPublisher<Bool, Error> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["username": username])
+        Log.p(Log.auth, Log.read, "Checking username availability: \(username)")
 
         return database.collection("usernames")
             .document(username)
@@ -311,7 +329,7 @@ final class AuthenticationService: ObservableObject {
     /// - Parameter base: Base string to append numbers to
     /// - Returns: A publisher that emits an available username
     private func findAvailableUsername(base: String) -> AnyPublisher<String, Error> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["base": base])
+        Log.p(Log.auth, Log.start, "Finding available username")
 
         // Try up to 100 random numbers (very unlikely to need this many)
         let attempts = (0 ..< 100).map { _ in
@@ -335,11 +353,11 @@ final class AuthenticationService: ObservableObject {
     /// - Parameter username: Username to reserve
     /// - Returns: A publisher that completes when the username is reserved
     private func reserveUsername(_ username: String) -> AnyPublisher<Void, Error> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["username": username])
+        Log.p(Log.auth, Log.start, "Reserving username: \(username)")
 
         guard let userId = currentUser?.uid else {
             return Fail(error: NSError(
-                domain: "com.kstrikis.ReelAI",
+                domain: "com.edgineer.ReelAI",
                 code: -1,
                 userInfo: [NSLocalizedDescriptionKey: "No authenticated user"]
             ))
@@ -352,10 +370,10 @@ final class AuthenticationService: ObservableObject {
                 "createdAt": FieldValue.serverTimestamp(),
             ]) { error in
                 if let error {
-                    AppLogger.error(AppLogger.auth, error, context: "Reserve username")
+                    Log.p(Log.auth, Log.event, Log.error, "Failed to reserve username: \(error.localizedDescription)")
                     promise(.failure(error))
                 } else {
-                    AppLogger.debug("👤 Username reserved: \(username)")
+                    Log.p(Log.auth, Log.event, "Username reserved successfully: \(username)")
                     promise(.success(()))
                 }
             }
@@ -371,28 +389,28 @@ final class AuthenticationService: ObservableObject {
     ///   - password: User's password
     /// - Returns: A publisher that emits the signed-in user or an error
     func signIn(email: String, password: String) -> AnyPublisher<User, Error> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["email": email])
+        Log.p(Log.auth, Log.start, "Signing in user with email")
 
         return Future<User, Error> { promise in
             Auth.auth().signIn(withEmail: email, password: password) { result, error in
                 if let error {
-                    AppLogger.error(AppLogger.auth, error, context: "Sign in")
+                    Log.p(Log.auth, Log.event, Log.error, "Sign in failed: \(error.localizedDescription)")
                     promise(.failure(error))
                     return
                 }
 
                 guard let user = result?.user else {
                     let error = NSError(
-                        domain: "com.kstrikis.ReelAI",
+                        domain: "com.edgineer.ReelAI",
                         code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "User not found after sign in"]
                     )
-                    AppLogger.error(AppLogger.auth, error, context: "Sign in - missing user")
+                    Log.p(Log.auth, Log.event, Log.error, "Sign in failed: No user returned")
                     promise(.failure(error))
                     return
                 }
 
-                AppLogger.methodExit(AppLogger.auth, result: "Success: \(user.uid)")
+                Log.p(Log.auth, Log.event, Log.success, "User signed in successfully: \(user.uid)")
                 promise(.success(user))
             }
         }
@@ -403,7 +421,7 @@ final class AuthenticationService: ObservableObject {
     /// Signs in as a demo user
     /// - Returns: A publisher that emits the signed-in demo user or an error
     func signInAsDemo() -> AnyPublisher<User, Error> {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.auth, Log.start, "Starting demo sign in process")
         print("🎭 Starting demo sign in process...")
 
         // Using a fixed demo account for simplicity
@@ -423,28 +441,28 @@ final class AuthenticationService: ObservableObject {
     ///   - password: User's password
     /// - Returns: A publisher that emits the created user or an error
     func signUp(email: String, password: String) -> AnyPublisher<User, Error> {
-        AppLogger.methodEntry(AppLogger.auth, params: ["email": email])
+        Log.p(Log.auth, Log.start, "Starting user signup with email")
 
         return Future<User, Error> { promise in
             Auth.auth().createUser(withEmail: email, password: password) { result, error in
                 if let error {
-                    AppLogger.error(AppLogger.auth, error, context: "Sign up")
+                    Log.p(Log.auth, Log.event, Log.error, "Sign up failed: \(error.localizedDescription)")
                     promise(.failure(error))
                     return
                 }
 
                 guard let user = result?.user else {
                     let error = NSError(
-                        domain: "com.kstrikis.ReelAI",
+                        domain: "com.edgineer.ReelAI",
                         code: -1,
                         userInfo: [NSLocalizedDescriptionKey: "User not found after sign up"]
                     )
-                    AppLogger.error(AppLogger.auth, error, context: "Sign up - missing user")
+                    Log.p(Log.auth, Log.event, Log.error, "Sign up failed: No user returned")
                     promise(.failure(error))
                     return
                 }
 
-                AppLogger.methodExit(AppLogger.auth, result: "Success: \(user.uid)")
+                Log.p(Log.auth, Log.event, Log.success, "User created successfully: \(user.uid)")
                 promise(.success(user))
             }
         }
@@ -454,12 +472,12 @@ final class AuthenticationService: ObservableObject {
 
     /// Signs out the current user
     func signOut() {
-        AppLogger.methodEntry(AppLogger.auth)
+        Log.p(Log.auth_session, Log.start, "Signing out user")
         do {
             try Auth.auth().signOut()
-            AppLogger.methodExit(AppLogger.auth, result: "Success")
+            Log.p(Log.auth_session, Log.event, Log.success, "User signed out successfully")
         } catch {
-            AppLogger.error(AppLogger.auth, error, context: "Sign out")
+            Log.p(Log.auth_session, Log.event, Log.error, "Sign out failed: \(error.localizedDescription)")
         }
     }
 }

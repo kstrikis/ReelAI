@@ -10,8 +10,14 @@ struct PublishingView: View {
     @EnvironmentObject private var authService: AuthenticationService
     @Environment(\.dismiss) private var dismiss
     @StateObject private var viewModel: PublishingViewModel
+    @FocusState private var focusedField: Field?
+    
+    enum Field {
+        case title, description
+    }
     
     init(selectedVideo: URL? = nil) {
+        Log.p(Log.video, Log.start, "Initializing PublishingView")
         // We need to use a temporary AuthenticationService here, it will be replaced by the environment object
         let tempAuthService = AuthenticationService()
         _viewModel = StateObject(wrappedValue: PublishingViewModel(preselectedVideo: selectedVideo, authService: tempAuthService))
@@ -40,6 +46,7 @@ struct PublishingView: View {
                             set: { viewModel.handleTitleEdit($0) }
                         )
                     )
+                    .focused($focusedField, equals: .title)
                     
                     // Description using TextEditor for multiline support
                     TextEditor(text: $viewModel.description)
@@ -47,6 +54,7 @@ struct PublishingView: View {
                         .padding(8)
                         .background(Color.white)
                         .cornerRadius(10)
+                        .focused($focusedField, equals: .description)
                         .overlay(
                             Group {
                                 if viewModel.description.isEmpty {
@@ -86,7 +94,19 @@ struct PublishingView: View {
                     }
                 }
                 .padding()
+                .simultaneousGesture(
+                    TapGesture()
+                        .onEnded { _ in
+                            focusedField = nil
+                        }
+                )
             }
+            .simultaneousGesture(
+                DragGesture()
+                    .onChanged { _ in
+                        focusedField = nil
+                    }
+            )
         }
         .navigationTitle("Publish")
         .navigationBarTitleDisplayMode(.inline)
@@ -157,14 +177,16 @@ struct VideoPreview: View {
     }
     
     private func loadVideo() {
-        print("🎥 🔍 VIDEO PREVIEW - Loading video from URL: \(url)")
-        print("🎥 🔍 VIDEO PREVIEW - URL scheme: \(url.scheme ?? "nil")")
-        print("🎥 🔍 VIDEO PREVIEW - Is file URL: \(url.isFileURL)")
-        print("🎥 🔍 VIDEO PREVIEW - Path: \(url.path)")
+        Log.p(Log.video, Log.start, "Loading video preview")
+        Log.p(Log.video, Log.event, "Video details:")
+        Log.p(Log.video, Log.event, "- URL: \(url)")
+        Log.p(Log.video, Log.event, "- Scheme: \(url.scheme ?? "nil")")
+        Log.p(Log.video, Log.event, "- Is file URL: \(url.isFileURL)")
+        Log.p(Log.video, Log.event, "- Path: \(url.path)")
         
         // If it's a file URL (from manual selection), use it directly
         if url.isFileURL {
-            print("🎥 📂 VIDEO PREVIEW - Using direct file access")
+            Log.p(Log.video, Log.read, "Using direct file access")
             let playerItem = AVPlayerItem(url: url)
             self.player = AVPlayer(playerItem: playerItem)
             self.player?.play()
@@ -172,15 +194,15 @@ struct VideoPreview: View {
         }
         
         // Otherwise, try to find it in Photos library
-        print("🎥 📱 VIDEO PREVIEW - Searching Photos library")
+        Log.p(Log.video, Log.read, "Searching Photos library")
         let options = PHFetchOptions()
         options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
         
         let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
-        print("🎥 📱 VIDEO PREVIEW - Found \(fetchResult.count) videos in Photos")
+        Log.p(Log.video, Log.read, "Found \(fetchResult.count) videos in Photos")
         
         fetchResult.enumerateObjects { asset, _, stop in
-            print("🎥 📱 VIDEO PREVIEW - Checking asset: \(asset.localIdentifier)")
+            Log.p(Log.video, Log.read, "Checking asset: \(asset.localIdentifier)")
             let videoOptions = PHVideoRequestOptions()
             videoOptions.version = .current
             videoOptions.deliveryMode = .highQualityFormat
@@ -189,10 +211,11 @@ struct VideoPreview: View {
             PHImageManager.default().requestAVAsset(forVideo: asset, options: videoOptions) { avAsset, _, _ in
                 if let urlAsset = avAsset as? AVURLAsset {
                     let assetURL = urlAsset.url
-                    print("🎥 📱 VIDEO PREVIEW - Comparing asset URL: \(assetURL.lastPathComponent)")
-                    print("🎥 📱 VIDEO PREVIEW - With target URL: \(url.lastPathComponent)")
+                    Log.p(Log.video, Log.read, "Comparing URLs:")
+                    Log.p(Log.video, Log.read, "- Asset: \(assetURL.lastPathComponent)")
+                    Log.p(Log.video, Log.read, "- Target: \(url.lastPathComponent)")
                     if assetURL.lastPathComponent == url.lastPathComponent {
-                        print("🎥 ✅ VIDEO PREVIEW - Found matching video!")
+                        Log.p(Log.video, Log.read, Log.success, "Found matching video")
                         DispatchQueue.main.async {
                             let playerItem = AVPlayerItem(asset: urlAsset)
                             self.player = AVPlayer(playerItem: playerItem)
@@ -201,7 +224,7 @@ struct VideoPreview: View {
                         stop.pointee = true
                     }
                 } else {
-                    print("🎥 ❌ VIDEO PREVIEW - Asset is not a URL asset")
+                    Log.p(Log.video, Log.read, Log.error, "Asset is not a URL asset")
                 }
             }
         }
@@ -227,18 +250,19 @@ class PublishingViewModel: ObservableObject {
     private var hasEditedTitle = false
     private var cancellables = Set<AnyCancellable>()
     private var authService: AuthenticationService
+    private var uploadTask: Task<Void, Error>?
     
     init(preselectedVideo: URL? = nil, authService: AuthenticationService) {
         self.authService = authService
-        print("📤 PublishingViewModel init")
-        print("📤 Preselected video URL: \(String(describing: preselectedVideo))")
+        Log.p(Log.video, Log.start, "Initializing PublishingViewModel")
+        Log.p(Log.video, Log.event, "Preselected video URL: \(String(describing: preselectedVideo))")
         
         // Set default title as current date/time
         updateDefaultTitle()
         
         // If we have a preselected video, load it
         if let preselectedVideo {
-            print("📤 Loading preselected video: \(preselectedVideo.path)")
+            Log.p(Log.video, Log.read, "Loading preselected video: \(preselectedVideo.path)")
             loadVideoFromURL(preselectedVideo)
         }
     }
@@ -257,7 +281,7 @@ class PublishingViewModel: ObservableObject {
     }
     
     var canUpload: Bool {
-        !effectiveTitle.isEmpty && selectedVideo != nil
+        !effectiveTitle.isEmpty && selectedVideo != nil && !isUploading
     }
     
     func handleTitleEdit(_ newTitle: String) {
@@ -266,40 +290,53 @@ class PublishingViewModel: ObservableObject {
     }
     
     func showVideoPicker() {
+        Log.p(Log.video, Log.event, "Showing video picker")
         showingVideoPicker = true
     }
     
     private func handleVideoSelection() {
-        guard let selection = videoSelection else { return }
+        guard let item = videoSelection else { return }
+        
+        Log.p(Log.video, Log.start, "Processing selected video")
         
         Task {
             do {
-                let videoData = try await selection.loadTransferable(type: Data.self)
-                guard let videoData = videoData else {
-                    throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not load video data"])
+                guard let data = try await item.loadTransferable(type: Data.self) else {
+                    Log.p(Log.video, Log.event, Log.error, "Selected video data is nil")
+                    return
                 }
                 
-                // Save to temporary file
-                let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
-                try videoData.write(to: tempURL)
+                // Create a temporary URL
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent(UUID().uuidString)
+                    .appendingPathExtension("mov")
                 
+                // Write the data
+                try data.write(to: tempURL)
+                Log.p(Log.video, Log.save, Log.success, "Saved video to temporary location: \(tempURL.path)")
+                
+                // Update UI on main thread
                 await MainActor.run {
-                    self.selectedVideo = tempURL
+                    loadVideoFromURL(tempURL)
                 }
             } catch {
+                Log.p(Log.video, Log.event, Log.error, "Failed to load selected video: \(error.localizedDescription)")
                 await MainActor.run {
-                    self.errorMessage = error.localizedDescription
-                    self.showingError = true
+                    errorMessage = "Failed to load video: \(error.localizedDescription)"
+                    showingError = true
                 }
             }
         }
     }
     
     private func loadVideoFromURL(_ url: URL) {
+        Log.p(Log.video, Log.read, "Loading video from URL: \(url.path)")
+        
         Task {
             do {
                 // If it's already in our sandbox, use it directly
                 if url.path.contains(FileManager.default.temporaryDirectory.path) {
+                    Log.p(Log.video, Log.read, "Using direct file access for temporary file")
                     await MainActor.run {
                         self.selectedVideo = url
                     }
@@ -307,9 +344,11 @@ class PublishingViewModel: ObservableObject {
                 }
                 
                 // Otherwise, load it through Photos framework
+                Log.p(Log.video, Log.read, "Searching Photos library for video")
                 let options = PHFetchOptions()
                 options.predicate = NSPredicate(format: "mediaType = %d", PHAssetMediaType.video.rawValue)
                 let fetchResult = PHAsset.fetchAssets(with: .video, options: options)
+                Log.p(Log.video, Log.read, "Found \(fetchResult.count) videos in Photos")
                 
                 var foundAsset: PHAsset?
                 fetchResult.enumerateObjects { asset, _, stop in
@@ -325,6 +364,9 @@ class PublishingViewModel: ObservableObject {
                         defer { dispatchGroup.leave() }
                         if let urlAsset = avAsset as? AVURLAsset {
                             let assetURL = urlAsset.url
+                            Log.p(Log.video, Log.read, "Comparing URLs:")
+                            Log.p(Log.video, Log.read, "- Asset: \(assetURL.lastPathComponent)")
+                            Log.p(Log.video, Log.read, "- Target: \(url.lastPathComponent)")
                             if assetURL.lastPathComponent == url.lastPathComponent {
                                 foundAsset = asset
                                 stop.pointee = true
@@ -335,8 +377,11 @@ class PublishingViewModel: ObservableObject {
                 }
                 
                 guard let asset = foundAsset else {
+                    Log.p(Log.video, Log.read, Log.error, "Could not find video in Photos library")
                     throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not find video in Photos library"])
                 }
+                
+                Log.p(Log.video, Log.read, Log.success, "Found matching video asset")
                 
                 // Request the video data
                 let videoOptions = PHVideoRequestOptions()
@@ -344,30 +389,39 @@ class PublishingViewModel: ObservableObject {
                 videoOptions.deliveryMode = .highQualityFormat
                 videoOptions.isNetworkAccessAllowed = true
                 
+                Log.p(Log.video, Log.read, "Requesting video asset")
                 let avAsset = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<AVAsset, Error>) in
                     PHImageManager.default().requestAVAsset(forVideo: asset, options: videoOptions) { avAsset, _, info in
                         if let error = info?[PHImageErrorKey] as? Error {
+                            Log.p(Log.video, Log.read, Log.error, "Failed to load video asset: \(error.localizedDescription)")
                             continuation.resume(throwing: error)
                         } else if let avAsset {
+                            Log.p(Log.video, Log.read, Log.success, "Successfully loaded video asset")
                             continuation.resume(returning: avAsset)
                         } else {
-                            continuation.resume(throwing: NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Failed to load video"]))
+                            Log.p(Log.video, Log.read, Log.error, "Failed to load video asset")
+                            continuation.resume(throwing: NSError(domain: "", code: -1,
+                                                               userInfo: [NSLocalizedDescriptionKey: "Failed to load video asset"]))
                         }
                     }
                 }
                 
                 guard let urlAsset = avAsset as? AVURLAsset else {
+                    Log.p(Log.video, Log.read, Log.error, "Could not get URL from asset")
                     throw NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Could not get URL from asset"])
                 }
                 
                 // Create a temporary copy in our sandbox
+                Log.p(Log.video, Log.save, "Creating temporary copy of video")
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
                 try FileManager.default.copyItem(at: urlAsset.url, to: tempURL)
+                Log.p(Log.video, Log.save, Log.success, "Created temporary copy at: \(tempURL.path)")
                 
                 await MainActor.run {
                     self.selectedVideo = tempURL
                 }
             } catch {
+                Log.p(Log.video, Log.read, Log.error, "Failed to load video: \(error.localizedDescription)")
                 await MainActor.run {
                     self.errorMessage = error.localizedDescription
                     self.showingError = true
@@ -377,24 +431,24 @@ class PublishingViewModel: ObservableObject {
     }
     
     func uploadVideo(userId: String, username: String) {
-        print("📤 Starting upload process...")
-        print("📤 Selected video URL: \(String(describing: selectedVideo))")
+        Log.p(Log.video, Log.event, "Starting upload process")
+        Log.p(Log.video, Log.event, "Selected video URL: \(String(describing: selectedVideo))")
         
         guard let videoURL = selectedVideo else {
-            print("❌ No video URL available")
+            Log.p(Log.video, Log.event, Log.error, "No video URL available")
             errorMessage = "No video selected"
             showingError = true
             return
         }
-        print("📤 Video exists at: \(videoURL.path)")
+        Log.p(Log.video, Log.event, "Video exists at: \(videoURL.path)")
         
         guard !effectiveTitle.isEmpty else {
-            print("❌ No title provided")
+            Log.p(Log.video, Log.event, Log.error, "No title provided")
             errorMessage = "Title is required"
             showingError = true
             return
         }
-        print("📤 Title: \(effectiveTitle)")
+        Log.p(Log.video, Log.event, "Title: \(effectiveTitle)")
         
         isUploading = true
         publishState = "Preparing..."
@@ -407,41 +461,55 @@ class PublishingViewModel: ObservableObject {
             description: description.isEmpty ? nil : description
         )
         .receive(on: DispatchQueue.main)
-        .sink { [weak self] state in
-            guard let self = self else { return }
-            
-            switch state {
-            case .creatingDocument:
-                self.publishState = "Creating document..."
-                
-            case let .uploading(progress):
-                self.uploadProgress = progress
-                self.publishState = "Uploading video: \(Int(progress * 100))%"
-                
-            case .updatingDocument:
-                self.publishState = "Finalizing..."
-                
-            case .completed:
+        .sink(
+            receiveCompletion: { [weak self] completion in
+                guard let self = self else { return }
+                Log.p(Log.video, Log.event, "Upload publisher completed")
                 self.isUploading = false
-                self.showingSuccess = true
                 self.publishState = ""
+            },
+            receiveValue: { [weak self] state in
+                guard let self = self else { return }
                 
-            case let .error(error):
-                self.isUploading = false
-                self.errorMessage = error.localizedDescription
-                self.showingError = true
-                self.publishState = ""
+                switch state {
+                case .creatingDocument:
+                    Log.p(Log.video, Log.event, "Creating document")
+                    self.publishState = "Creating document..."
+                    
+                case let .uploading(progress):
+                    Log.p(Log.video, Log.event, "Upload progress: \(Int(progress * 100))%")
+                    self.uploadProgress = progress
+                    self.publishState = "Uploading video: \(Int(progress * 100))%"
+                    
+                case .updatingDocument:
+                    Log.p(Log.video, Log.event, "Updating document")
+                    self.publishState = "Finalizing..."
+                    
+                case .completed:
+                    Log.p(Log.video, Log.event, Log.success, "Upload completed successfully")
+                    self.isUploading = false
+                    self.showingSuccess = true
+                    self.publishState = ""
+                    
+                case let .error(error):
+                    Log.p(Log.video, Log.event, Log.error, "Upload failed: \(error.localizedDescription)")
+                    self.isUploading = false
+                    self.errorMessage = error.localizedDescription
+                    self.showingError = true
+                    self.publishState = ""
+                }
             }
-        }
+        )
         .store(in: &cancellables)
     }
     
-    func updateAuthService(_ newAuthService: AuthenticationService) {
-        print("📤 Updating auth service")
-        self.authService = newAuthService
+    func updateAuthService(_ newService: AuthenticationService) {
+        Log.p(Log.video, Log.update, "Updating auth service")
+        authService = newService
     }
     
     func cancelUpload() {
+        Log.p(Log.video, Log.event, "User cancelled upload")
         cancellables.removeAll()
         isUploading = false
         uploadProgress = 0
