@@ -321,6 +321,8 @@ struct VideoVerticalFeed: View {
     }
     
     var body: some View {
+        let fullScreenSize = UIScreen.main.bounds.size
+
         GeometryReader { geometry in
             ZStack {
                 Color.black.ignoresSafeArea()
@@ -335,10 +337,10 @@ struct VideoVerticalFeed: View {
                                 VideoVerticalPlayer(
                                     video: handler.videos[index],
                                     player: handler.getPlayer(for: handler.videos[index]),
-                                    size: geometry.size
+                                    size: fullScreenSize
                                 )
                                 .id(handler.videos[index].id)
-                                .frame(width: geometry.size.width, height: geometry.size.height)
+                                .frame(width: fullScreenSize.width, height: fullScreenSize.height)
                             }
                         }
                     }
@@ -357,6 +359,7 @@ struct VideoVerticalFeed: View {
                 }
             }
         }
+        .frame(width: fullScreenSize.width, height: fullScreenSize.height)  // Force full screen size
         .onAppear {
             Log.p(Log.video, Log.start, "Vertical video feed appeared")
             if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
