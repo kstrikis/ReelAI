@@ -123,12 +123,156 @@ final class CameraViewModel {
     }
 }
 
+// MARK: - Camera Controls Views
+
+struct CameraTopControls: View {
+    let onGalleryTap: () -> Void
+    let onCameraSwitch: () -> Void
+    
+    var body: some View {
+        HStack {
+            Button(action: {
+                Log.p(Log.camera, Log.event, "User tapped to open gallery")
+                onGalleryTap()
+            }, label: {
+                Image(systemName: "photo.on.rectangle")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white)
+                    .padding()
+            })
+            
+            Spacer()
+            
+            Button(action: {
+                Log.p(Log.camera, Log.event, "User tapped to switch camera")
+                onCameraSwitch()
+            }, label: {
+                Image(systemName: "camera.rotate")
+                    .font(.system(size: 24))
+                    .foregroundColor(.white)
+                    .padding()
+            })
+        }
+        .padding(.top, 10)
+    }
+}
+
+struct CameraRecordButton: View {
+    let isRecording: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: {
+            Log.p(Log.camera, Log.event, "User tapped record button")
+            onTap()
+        }, label: {
+            ZStack {
+                // Outer glow
+                Circle()
+                    .fill(
+                        RadialGradient(
+                            gradient: Gradient(colors: [
+                                (isRecording ? Color.red : Color.white).opacity(0.3),
+                                Color.clear
+                            ]),
+                            center: .center,
+                            startRadius: 25,
+                            endRadius: 40
+                        )
+                    )
+                    .frame(width: 80, height: 80)
+                
+                // Inner circle with gradient
+                Circle()
+                    .fill(
+                        LinearGradient(
+                            gradient: Gradient(colors: [
+                                isRecording ? Color.red : Color.white,
+                                isRecording ? Color.red.opacity(0.8) : Color.white.opacity(0.8)
+                            ]),
+                            startPoint: .topLeading,
+                            endPoint: .bottomTrailing
+                        )
+                    )
+                    .frame(width: 65, height: 65)
+                    .shadow(color: isRecording ? Color.red.opacity(0.5) : Color.white.opacity(0.5), radius: 10)
+                
+                // Recording indicator
+                if isRecording {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.white)
+                        .frame(width: 25, height: 25)
+                        .shadow(color: Color.white.opacity(0.5), radius: 5)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: isRecording)
+        })
+        .buttonStyle(ScaleButtonStyle())
+    }
+}
+
+struct CameraBottomControls: View {
+    let errorMessage: String?
+    let isRecording: Bool
+    let onRecordTap: () -> Void
+    let onGalleryTap: () -> Void
+    let onCameraSwitch: () -> Void
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            if let error = errorMessage {
+                Text(error)
+                    .foregroundColor(Color.red)
+                    .font(.caption)
+                    .padding(.horizontal)
+                    .multilineTextAlignment(.center)
+            }
+            
+            HStack(spacing: 30) {
+                // Gallery button
+                Button(action: {
+                    Log.p(Log.camera, Log.event, "User tapped to open gallery")
+                    onGalleryTap()
+                }, label: {
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.system(size: 24))
+                        .foregroundColor(Color.white)
+                        .frame(width: 60, height: 60)
+                        .background(Color.black.opacity(0.3))
+                        .clipShape(Circle())
+                })
+                .buttonStyle(ScaleButtonStyle())
+
+                // Record button
+                CameraRecordButton(isRecording: isRecording, onTap: onRecordTap)
+
+                // Camera switch button
+                Button(action: {
+                    Log.p(Log.camera, Log.event, "User tapped to switch camera")
+                    onCameraSwitch()
+                }, label: {
+                    Image(systemName: "camera.rotate")
+                        .font(.system(size: 24))
+                        .foregroundColor(Color.white)
+                        .frame(width: 60, height: 60)
+                        .background(Color.black.opacity(0.3))
+                        .clipShape(Circle())
+                })
+                .buttonStyle(ScaleButtonStyle())
+            }
+        }
+        .padding(.bottom, 30)
+    }
+}
+
+// MARK: - Main View
+
 struct CameraRecordingView: View {
     let isActive: Bool
     @EnvironmentObject private var authService: AuthenticationService
     @State private var viewModel: CameraViewModel?
     @State private var showingGallery = false
-
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -142,86 +286,38 @@ struct CameraRecordingView: View {
                 } else {
                     ContentUnavailableView("No camera feed", systemImage: "video.slash")
                 }
-
+                
                 // Controls overlay
                 VStack {
-                    // Top controls
-                    HStack {
-                        Button(action: {
-                            Log.p(Log.camera, Log.event, "User tapped to open gallery")
-                            showingGallery = true
-                        }, label: {
-                            Image(systemName: "photo.on.rectangle")
-                                .font(.system(size: 24))
-                                .foregroundColor(.white)
-                                .padding()
-                        })
-
-                        Spacer()
-
-                        Button(action: {
-                            Log.p(Log.camera, Log.event, "User tapped to switch camera")
+                    Spacer()
+                    
+                    CameraBottomControls(
+                        errorMessage: viewModel?.errorMessage,
+                        isRecording: viewModel?.isRecording == true,
+                        onRecordTap: {
+                            Task {
+                                await viewModel?.toggleRecording()
+                            }
+                        },
+                        onGalleryTap: { showingGallery = true },
+                        onCameraSwitch: {
                             Task {
                                 await CameraManager.shared.switchCamera()
                             }
-                        }, label: {
-                            Image(systemName: "camera.rotate")
-                                .font(.system(size: 24))
-                                .foregroundColor(.white)
-                                .padding()
-                        })
-                    }
-                    .padding(.top, 10)
-
-                    Spacer()
-
-                    // Bottom controls
-                    VStack(spacing: 20) {
-                        if let error = viewModel?.errorMessage {
-                            Text(error)
-                                .foregroundColor(.red)
-                                .font(.caption)
-                                .padding(.horizontal)
-                                .multilineTextAlignment(.center)
                         }
-
-                        HStack {
-                            Spacer()
-
-                            // Record button
-                            Button(action: {
-                                Log.p(Log.camera, Log.event, "User tapped record button")
-                                Task {
-                                    await viewModel?.toggleRecording()
-                                }
-                            }, label: {
-                                Circle()
-                                    .fill(viewModel?.isRecording == true ? Color.red : Color.white)
-                                    .frame(width: 80, height: 80)
-                                    .overlay(
-                                        Circle()
-                                            .stroke(Color.white, lineWidth: 4)
-                                            .frame(width: 70, height: 70)
-                                    )
-                            })
-
-                            Spacer()
-                        }
-                    }
-                    .padding(.bottom, 30)
+                    )
                 }
             }
         }
         .ignoresSafeArea()
-        .sheet(isPresented: $showingGallery, onDismiss: {
-            // Restart camera when returning from gallery
+        .sheet(isPresented: $showingGallery) {
             if isActive {
                 Log.p(Log.camera, Log.start, "Restarting camera after gallery dismissal")
                 Task {
                     await viewModel?.handleCameraPreviews()
                 }
             }
-        }) {
+        } content: {
             NavigationView {
                 GalleryView(authService: authService)
                     .toolbar {
@@ -234,7 +330,6 @@ struct CameraRecordingView: View {
                     }
             }
             .onAppear {
-                // Stop camera when showing gallery
                 Log.p(Log.camera, Log.stop, "Stopping camera for gallery view")
                 viewModel?.stopCamera()
             }
@@ -242,15 +337,12 @@ struct CameraRecordingView: View {
         .onChange(of: isActive) { _, isNowActive in
             if isNowActive {
                 Log.p(Log.camera, Log.start, "Camera view became active")
-                // Initialize viewModel with authService
                 viewModel = CameraViewModel(authService: authService)
-                // Start camera when swiping to this view
                 Task {
                     await viewModel?.handleCameraPreviews()
                 }
             } else {
                 Log.p(Log.camera, Log.stop, "Camera view became inactive")
-                // Stop camera when swiping away
                 viewModel?.stopCamera()
             }
         }
@@ -264,3 +356,12 @@ struct CameraRecordingView: View {
         }
     }
 #endif
+
+// Custom button style for record button
+struct ScaleButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
+            .animation(.easeInOut(duration: 0.1), value: configuration.isPressed)
+    }
+}

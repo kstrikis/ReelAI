@@ -247,6 +247,10 @@ final class CameraManager: NSObject, @unchecked Sendable {
             Log.p(Log.camera, Log.event, "Committed session configuration")
         }
 
+        // Set session preset to lower quality
+        captureSession.sessionPreset = .iFrame960x540
+        Log.p(Log.camera, Log.event, "Set camera resolution to 960x540")
+
         // Remove previous inputs and outputs
         captureSession.inputs.forEach { captureSession.removeInput($0) }
         captureSession.outputs.forEach { captureSession.removeOutput($0) }
