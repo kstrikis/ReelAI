@@ -11,7 +11,7 @@ import FirebaseAuth
 
 struct ContentView: View {
     @EnvironmentObject private var authService: AuthenticationService
-    @State private var selectedTab = 1 // 0: Camera, 1: AI Tools
+    @State private var selectedTab = 1 // 0: Camera, 1: AI Tools, 2: Feed
     @State private var showSideMenu = false
 
     var body: some View {
@@ -23,9 +23,13 @@ struct ContentView: View {
                         .ignoresSafeArea()
                         .tag(0)
 
-                    // AI Tools (Right)
+                    // AI Tools (Middle)
                     AIToolsView()
                         .tag(1)
+                        
+                    // Video Feed (Right)
+                    UnifiedVideoFeed()
+                        .tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .onChange(of: selectedTab) { _, newValue in
@@ -55,9 +59,21 @@ struct ContentView: View {
         }
         .onAppear {
             Log.p(Log.app, Log.start, "Content view appeared")
+            // Add notification observer for returning to AI Tools
+            NotificationCenter.default.addObserver(
+                forName: NSNotification.Name("ReturnToAITools"),
+                object: nil,
+                queue: .main
+            ) { _ in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    selectedTab = 1 // Switch to AI Tools tab
+                }
+            }
         }
         .onDisappear {
             Log.p(Log.app, Log.exit, "Content view disappeared")
+            // Remove notification observer
+            NotificationCenter.default.removeObserver(self)
         }
     }
 

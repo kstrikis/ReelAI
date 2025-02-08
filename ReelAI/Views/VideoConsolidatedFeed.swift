@@ -315,7 +315,15 @@ class UnifiedVideoHandler: ObservableObject {
 
 struct UnifiedVideoFeed: View {
     @StateObject private var handler = UnifiedVideoHandler.shared
-
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var dragOffset = CGSize.zero
+    @State private var dragDirection: DragDirection = .none
+    @Environment(\.dismiss) private var dismiss
+    
+    private enum DragDirection {
+        case horizontal, vertical, none
+    }
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -350,6 +358,78 @@ struct UnifiedVideoFeed: View {
                         handler.handleIndexChange(newValue)
                     }
                 }
+            }
+            .offset(y: dragOffset.height)
+            .gesture(
+                DragGesture()
+                    .onChanged { gesture in
+                        // Determine drag direction if not already set
+                        if dragDirection == .none {
+                            dragDirection = abs(gesture.translation.width) > abs(gesture.translation.height) ? .horizontal : .vertical
+                        }
+                        
+                        // Only handle vertical drags for the shortcut
+                        if dragDirection == .vertical {
+                            // Only allow downward drag with resistance
+                            if gesture.translation.height > 0 {
+                                dragOffset = CGSize(
+                                    width: 0,
+                                    height: gesture.translation.height * 0.5
+                                )
+                            }
+                        }
+                    }
+                    .onEnded { gesture in
+                        let verticalThreshold: CGFloat = 100
+                        
+                        if dragDirection == .vertical && gesture.translation.height > verticalThreshold {
+                            Log.p(Log.video, Log.event, "Detected downward swipe, returning to AI Tools")
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                dragOffset = .zero
+                                NotificationCenter.default.post(name: NSNotification.Name("ReturnToAITools"), object: nil)
+                            }
+                        } else {
+                            // Reset position if threshold not met
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                dragOffset = .zero
+                            }
+                        }
+                        
+                        // Reset drag direction
+                        dragDirection = .none
+                    }
+            )
+        }
+        .onAppear {
+            Log.p(Log.video, Log.start, "Video feed appeared")
+            if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
+               let player = handler.getPlayer(for: currentVideo) {
+                player.play()
+            }
+        }
+        .onDisappear {
+            Log.p(Log.video, Log.exit, "Video feed disappeared")
+            if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
+               let player = handler.getPlayer(for: currentVideo) {
+                player.pause()
+            }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .active:
+                Log.p(Log.video, Log.event, "Scene became active")
+                if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
+                   let player = handler.getPlayer(for: currentVideo) {
+                    player.play()
+                }
+            case .inactive, .background:
+                Log.p(Log.video, Log.event, "Scene became \(newPhase == .inactive ? "inactive" : "background")")
+                if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
+                   let player = handler.getPlayer(for: currentVideo) {
+                    player.pause()
+                }
+            @unknown default:
+                break
             }
         }
     }
