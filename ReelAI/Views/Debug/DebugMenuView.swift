@@ -8,6 +8,7 @@ struct DebugMenuView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showVideoList = false
     @State private var showVideoFeed = false
+    @State private var showVerticalFeed = false
     @StateObject private var viewModel = DebugViewModel()
     
     var body: some View {
@@ -49,6 +50,13 @@ struct DebugMenuView: View {
                     showVideoFeed = true
                 }) {
                     Label("Consolidated Feed", systemImage: "play.square.stack.fill")
+                }
+
+                Button(action: {
+                    Log.p(Log.debug, Log.analyze, "Opening vertical video feed test")
+                    showVerticalFeed = true
+                }) {
+                    Label("Vertical Feed Test", systemImage: "arrow.up.and.down.text.horizontal")
                 }
             }
             
@@ -167,6 +175,13 @@ struct DebugMenuView: View {
             NavigationView {
                 UnifiedVideoFeed()
                     .navigationTitle("Consolidated Video Feed")
+                    .navigationBarTitleDisplayMode(.inline)
+            }
+        }
+        .sheet(isPresented: $showVerticalFeed) {
+            NavigationView {
+                VideoVerticalFeed()
+                    .navigationTitle("Vertical Feed Test")
                     .navigationBarTitleDisplayMode(.inline)
             }
         }
