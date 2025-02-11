@@ -322,15 +322,14 @@ struct VideoVerticalFeed: View {
     
     var body: some View {
         let fullScreenSize = UIScreen.main.bounds.size
-
-        GeometryReader { geometry in
+        
+        GeometryReader { _ in  // We'll use fullScreenSize instead of geometry
             ZStack {
                 Color.black.ignoresSafeArea()
 
                 if handler.videos.isEmpty {
                     emptyStateView
                 } else {
-                    // Change to vertical scrolling
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(handler.videos.indices, id: \.self) { index in
@@ -341,8 +340,10 @@ struct VideoVerticalFeed: View {
                                 )
                                 .id(handler.videos[index].id)
                                 .frame(width: fullScreenSize.width, height: fullScreenSize.height)
+                                .border(Color.blue.opacity(0.5), width: 2)  // Debug border
                             }
                         }
+                        .border(Color.red.opacity(0.5), width: 2)  // Debug border for LazyVStack
                     }
                     .scrollTargetLayout()
                     .scrollTargetBehavior(.paging)
@@ -350,7 +351,8 @@ struct VideoVerticalFeed: View {
                         handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex].id : nil
                     }, set: { newPosition in
                         if let newPosition,
-                           let index = handler.videos.firstIndex(where: { $0.id == newPosition }) {
+                           let index = handler.videos.firstIndex(where: { $0.id == newPosition }),
+                           index != handler.currentIndex {  // Only trigger if index actually changed
                             handler.handleIndexChange(index)
                         }
                     }))
@@ -360,6 +362,7 @@ struct VideoVerticalFeed: View {
             }
         }
         .frame(width: fullScreenSize.width, height: fullScreenSize.height)  // Force full screen size
+        .ignoresSafeArea()
         .onAppear {
             Log.p(Log.video, Log.start, "Vertical video feed appeared")
             if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
@@ -372,24 +375,6 @@ struct VideoVerticalFeed: View {
             if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
                let player = handler.getPlayer(for: currentVideo) {
                 player.pause()
-            }
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            switch newPhase {
-            case .active:
-                Log.p(Log.video, Log.event, "Scene became active")
-                if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
-                   let player = handler.getPlayer(for: currentVideo) {
-                    player.play()
-                }
-            case .inactive, .background:
-                Log.p(Log.video, Log.event, "Scene became \(newPhase == .inactive ? "inactive" : "background")")
-                if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
-                   let player = handler.getPlayer(for: currentVideo) {
-                    player.pause()
-                }
-            @unknown default:
-                break
             }
         }
     }
@@ -411,162 +396,34 @@ struct VideoVerticalFeed: View {
 
 struct VideoVerticalPlayer: View {
     let video: Video
+    let player: AVPlayer?
     let size: CGSize
-    @State private var player: AVPlayer?
-    @State private var showInfo = false
-    @State private var hideTask: Task<Void, Never>?
-    private var playerPublisher: AnyPublisher<AVPlayer?, Never>
-    @StateObject private var subscriptions = SubscriptionHolder()
-
-    init(video: Video, player: AVPlayer?, size: CGSize) {
-        self.video = video
-        self.size = size
-        self.playerPublisher = VerticalVideoHandler.shared.playerPublisher(for: video.id)
-    }
-
-    // Rest of the implementation remains the same as UnifiedVideoPlayer
+    
     var body: some View {
         ZStack {
-            Color.black
-
             if let player = player {
                 CustomVideoPlayer(player: player)
-                    .onAppear(perform: setupPlayerObservations)
-                    .onDisappear {
-                        cleanupPlayer()
-                    }
-            }
-
-            // Video info and engagement overlay
-            ZStack {
-                // Semi-transparent gradient background for text readability
-                LinearGradient(
-                    gradient: Gradient(colors: [
-                        Color.black.opacity(showInfo ? 0.7 : 0),
-                        Color.black.opacity(showInfo ? 0.4 : 0),
-                        Color.clear,
-                        Color.clear
-                    ]),
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-
-                VStack {
-                    // Video info (top)
-                    if showInfo {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(video.title)
-                                .font(.title2)
-                                .bold()
-                            
-                            HStack {
-                                Text(video.username)
-                                    .fontWeight(.medium)
-                            }
-                            
-                            if let description = video.description {
-                                Text(description)
-                                    .font(.subheadline)
-                                    .lineLimit(2)
-                            }
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal)
-                        .padding(.top, 50)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .transition(.opacity)
-                    }
-
-                    Spacer()
-                    
-                    // Engagement buttons (right)
-                    VStack(spacing: 12) {
-                        Button(action: { /* Like action */ }) {
-                            VStack(spacing: 4) {
-                                Image(systemName: "heart.fill")
-                                    .font(.system(size: 30))
-                                Text("Like")
-                                    .font(.caption)
-                            }
-                        }
-                        
-                        Button(action: { /* Dislike action */ }) {
-                            VStack(spacing: 4) {
-                                Image(systemName: "heart.slash.fill")
-                                    .font(.system(size: 30))
-                                Text("Dislike")
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                    .foregroundColor(.white)
-                    .padding(.trailing, 16)
-                    .padding(.bottom, 50)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-                }
-            }
-            .animation(.easeInOut, value: showInfo)
-        }
-        .onTapGesture {
-            showInfo.toggle()
-            scheduleInfoHide()
-        }
-        .onReceive(playerPublisher) { newPlayer in
-            self.player = newPlayer
-        }
-    }
-    
-    private func scheduleInfoHide() {
-        hideTask?.cancel()
-        if showInfo {
-            hideTask = Task {
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
-                if !Task.isCancelled {
-                    await MainActor.run {
-                        showInfo = false
-                    }
-                }
-            }
-        }
-    }
-    
-    private func setupPlayerObservations() {
-        guard let player = player else { return }
-
-        NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime,
-            object: player.currentItem,
-            queue: .main
-        ) { _ in
-            VerticalVideoHandler.shared.updateVideoPosition(for: video.id, position: .zero)
-            player.seek(to: .zero)
-            player.play()
-        }
-
-        let interval = CMTime(seconds: 0.5, preferredTimescale: CMTimeScale(NSEC_PER_SEC))
-        player.addPeriodicTimeObserver(forInterval: interval, queue: .main) { [weak player] time in
-            guard let player = player else { return }
-            VerticalVideoHandler.shared.updateVideoPosition(for: video.id, position: time)
-        }
-    }
-
-    private func cleanupPlayer() {
-        guard let player = player else { return }
-        
-        NotificationCenter.default.removeObserver(self, name: .AVPlayerItemDidPlayToEndTime, object: player.currentItem)
-        
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 200_000_000)
-            
-            let handler = VerticalVideoHandler.shared
-            
-            if handler.videos.indices.contains(handler.currentIndex),
-               handler.videos[handler.currentIndex].id != video.id {
-                player.pause()
-                Log.p(Log.video, Log.event, "Delayed pause of non-current video: \(video.id)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
             } else {
-                Log.p(Log.video, Log.event, "Skipped pausing current video: \(video.id)")
+                // Placeholder while video loads
+                Rectangle()
+                    .fill(Color.black)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .layoutPriority(1)
             }
+            
+            // Overlay controls and UI elements
+            VStack {
+                // Top controls (if any)
+                Spacer()
+                // Bottom controls (if any)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .layoutPriority(0)
         }
+        .frame(width: size.width, height: size.height)
+        .clipped() // Ensure content doesn't overflow
+        .background(Color.black)
     }
 } 
