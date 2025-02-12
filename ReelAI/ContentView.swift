@@ -28,12 +28,14 @@ struct ContentView: View {
                         .tag(1)
                         
                     // Video Feed (Right)
-                    UnifiedVideoFeed()
+                    VideoVerticalFeed()
                         .tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .onChange(of: selectedTab) { _, newValue in
                     Log.p(Log.app, Log.event, "User switched to tab: \(newValue)")
+                    // Update video feed active state
+                    VerticalVideoHandler.shared.setActive(newValue == 2)
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {

@@ -17,46 +17,57 @@ class VerticalVideoHandler: ObservableObject {
     @Published var isLoading = false
     @Published var isFirstVideoReady = false
     @Published private(set) var activeVideoIds: Set<String> = []
+    @Published var isActive: Bool = false  // Track if this feed is currently visible
     private var isHandlingSwipe = false
     private var swipeHandlingTask: Task<Void, Never>?
 
-    // Player management
-    private var preloadedPlayers: [String: AVPlayer] = [:]
-    private var preloadTasks: [String: Task<Void, Error>] = [:]
-    private var playerSubjects: [String: CurrentValueSubject<AVPlayer?, Never>] = [:]
-    var cancellables: Set<AnyCancellable> = []
-    private var initialBatchSize = 8
-    private var paginationBatchSize = 5
-
+    // Player management - simplified
+    private var players: [String: AVPlayer] = [:]
+    private var playerItemObservations: [String: AnyCancellable] = [:]
+    private var readyToPlayStates: [String: Bool] = [:]
+    private let playerSerializationQueue = DispatchQueue(label: "com.reelai.player.serialization")
+    
     // Track video positions
     private var videoPositions: [String: CMTime] = [:]
 
+    // Track active window size for video rendering
+    private let activeWindowSize = 3 // Number of videos to keep active on each side of current
+    private let preloadWindowSize = 2 // Number of videos to preload beyond active window
+    
+    // Track scroll progress for smooth audio transitions
+    @Published private var scrollProgress: CGFloat = 0
+    
     private init() {
+        // Ensure we start inactive
+        isActive = false
         loadInitialVideos()
     }
 
     func loadInitialVideos() {
         Log.p(Log.video, Log.event, "Loading initial batch of random videos")
-
         isLoading = true
+        
         Task {
             do {
-                // Use the existing FirestoreService
                 let initialCheck = try await FirestoreService.shared.fetchVideoBatch(startingAfter: nil, limit: 1)
                 if initialCheck.isEmpty {
                     Log.p(Log.video, Log.event, "No videos found, attempting to seed...")
                     try await FirestoreService.shared.seedVideos()
                 }
 
-                // Use the new random videos function
-                let batch = try await FirestoreService.shared.fetchRandomVideos(count: initialBatchSize)
+                let batch = try await FirestoreService.shared.fetchRandomVideos(count: 5)
                 Log.p(Log.video, Log.event, "Received \(batch.count) random videos")
 
                 await MainActor.run {
                     self.videos = batch
                     self.isLoading = false
                     self.isFirstVideoReady = !batch.isEmpty
-                    self.preloadInitialVideos()
+                    if !batch.isEmpty {
+                        // Prepare initial set of videos
+                        for i in 0..<min(3, batch.count) {
+                            self.preparePlayer(for: batch[i])
+                        }
+                    }
                 }
             } catch {
                 Log.p(Log.video, Log.event, Log.error, "Initial load failed: \(error)")
@@ -65,238 +76,233 @@ class VerticalVideoHandler: ObservableObject {
         }
     }
 
-    func loadMoreVideos() {
-        // Prevent loading during swipe animations or if already loading
-        guard !isLoading && !isHandlingSwipe else { 
-            Log.p(Log.video, Log.event, "Skipping loadMoreVideos - System is \(isHandlingSwipe ? "handling swipe" : "already loading")")
-            return 
-        }
-        isLoading = true
-
+    private func preparePlayer(for video: Video) {
+        // Don't prepare if we already have this player
+        guard players[video.id] == nil else { return }
+        
         Task {
             do {
-                // Use random videos for pagination too
-                let newVideos = try await FirestoreService.shared.fetchRandomVideos(count: paginationBatchSize)
-                Log.p(Log.video, Log.event, "Fetched \(newVideos.count) more random videos")
-                
-                // Double check we're not in the middle of a swipe before applying changes
-                guard !isHandlingSwipe else {
-                    Log.p(Log.video, Log.event, "Discarding fetched videos - system is handling swipe")
-                    isLoading = false
-                    return
-                }
-                
-                await MainActor.run {
-                    // Append the newly fetched videos to the existing array.
-                    self.videos.append(contentsOf: newVideos)
-                    // Preload videos after appending them, but *avoid* autoplaying them.
-                    for video in newVideos {
-                        preloadVideo(video)
-                    }
-                    self.isLoading = false
-                }
-            } catch {
-                Log.p(Log.video, Log.event, Log.error, "Failed to fetch more videos: \(error)")
-                await MainActor.run {
-                    self.isLoading = false
-                }
-            }
-        }
-    }
-
-    // MARK: - Player Management
-
-    func getPlayer(for video: Video) -> AVPlayer? {
-        return preloadedPlayers[video.id]
-    }
-
-    func playerPublisher(for videoId: String) -> AnyPublisher<AVPlayer?, Never> {
-        if playerSubjects[videoId] == nil {
-            playerSubjects[videoId] = CurrentValueSubject<AVPlayer?, Never>(preloadedPlayers[videoId])
-        }
-        return playerSubjects[videoId]!.eraseToAnyPublisher()
-    }
-
-    private func preloadInitialVideos() {
-        guard !videos.isEmpty else { return }
-
-        // Preload the first four videos instead of just two
-        let initialVideos = Array(videos.prefix(4))
-        for video in initialVideos {
-            preloadVideo(video)
-        }
-    }
-
-    private func preloadVideo(_ video: Video) {
-        let id = video.id
-        if preloadedPlayers[id] != nil { return }
-
-        Task {
-            do {
-                Log.p(Log.video, Log.event, "Preloading video: \(id)")
-                guard let url = try await FirestoreService.shared.getVideoDownloadURL(videoId: id) else {
-                    Log.p(Log.video, Log.event, Log.error, "Failed to get download URL for \(id)")
+                guard let url = try await FirestoreService.shared.getVideoDownloadURL(videoId: video.id) else {
+                    Log.p(Log.video, Log.event, Log.error, "Failed to get download URL")
                     return
                 }
 
                 let asset = AVURLAsset(url: url)
+                
+                // Load essential properties using modern async API
+                _ = try await asset.load(.tracks)
+                _ = try await asset.load(.duration)
+                
+                // Configure player item with loaded asset
                 let playerItem = AVPlayerItem(asset: asset)
                 let player = AVPlayer(playerItem: playerItem)
                 
-                // Configure for smooth playback
+                // Basic configuration for smooth playback
                 player.automaticallyWaitsToMinimizeStalling = false
-
-                await MainActor.run {
-                    preloadedPlayers[id] = player
-                    playerSubjects[id]?.send(player)
-                    Log.p(Log.video, Log.event, "Successfully preloaded video: \(id)")
-
-                    // Auto-play if this is the current video
-                    if videos.indices.contains(currentIndex), videos[currentIndex].id == id {
-                        player.play()
+                player.volume = 0  // Start muted, will unmute when current
+                
+                // Set up looping
+                NotificationCenter.default.addObserver(
+                    forName: .AVPlayerItemDidPlayToEndTime,
+                    object: playerItem,
+                    queue: .main
+                ) { [weak player] _ in
+                    player?.seek(to: .zero)
+                    // Only auto-play if we're active
+                    if self.isActive {
+                        player?.play()
                     }
                 }
+                
+                // Observe player item status
+                let statusObservation = playerItem.publisher(for: \.status)
+                    .removeDuplicates()
+                    .receive(on: DispatchQueue.main)
+                    .sink { [weak self] status in
+                        guard let self = self else { return }
+                        switch status {
+                        case .readyToPlay:
+                            self.readyToPlayStates[video.id] = true
+                            // Only start playing if we're active and this is the current video
+                            if self.isActive && video.id == self.videos[self.currentIndex].id {
+                                player.volume = 1
+                                player.play()
+                            }
+                        case .failed:
+                            Log.p(Log.video, Log.event, Log.error, "Player item failed: \(String(describing: playerItem.error))")
+                            self.readyToPlayStates[video.id] = false
+                        default:
+                            break
+                        }
+                    }
+                
+                await MainActor.run {
+                    self.players[video.id] = player
+                    self.playerItemObservations[video.id] = statusObservation
+                }
             } catch {
-                Log.p(Log.video, Log.event, Log.error, "Preload failed for \(id): \(error)")
+                Log.p(Log.video, Log.event, Log.error, "Player preparation failed: \(error)")
+            }
+        }
+    }
+
+    func getPlayer(for video: Video) -> AVPlayer? {
+        if let player = players[video.id] {
+            return player
+        }
+        
+        // If we don't have a player, prepare one if it's within our preload window
+        if let currentIdx = videos.firstIndex(where: { $0.id == video.id }),
+           abs(currentIdx - currentIndex) <= (activeWindowSize + preloadWindowSize) {
+            preparePlayer(for: video)
+        }
+        
+        return nil
+    }
+
+    func setActive(_ active: Bool) {
+        isActive = active
+        playerSerializationQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // If becoming inactive, pause all players
+            if !active {
+                for (_, player) in self.players {
+                    if player.isPlaying {
+                        player.pause()
+                    }
+                    player.volume = 0
+                }
+            } else if let currentVideo = self.videos.indices.contains(self.currentIndex) ? self.videos[self.currentIndex] : nil,
+                      let currentPlayer = self.players[currentVideo.id],
+                      self.readyToPlayStates[currentVideo.id] == true {
+                // If becoming active, only play current video
+                currentPlayer.volume = 1
+                currentPlayer.playImmediately(atRate: 1.0)
+            }
+        }
+    }
+
+    func updateScrollProgress(_ progress: CGFloat) {
+        // Don't process scroll updates when inactive
+        guard isActive else { return }
+        
+        scrollProgress = progress
+        
+        // Get the relevant video indices based on scroll direction
+        let currentVideoId = videos.indices.contains(currentIndex) ? videos[currentIndex].id : nil
+        let nextVideoId = progress > 0 && videos.indices.contains(currentIndex + 1) ? videos[currentIndex + 1].id : nil
+        let prevVideoId = progress < 0 && videos.indices.contains(currentIndex - 1) ? videos[currentIndex - 1].id : nil
+        
+        // Serialize playback state changes
+        playerSerializationQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            // Update playback states and volumes
+            for (videoId, player) in self.players {
+                if videoId == currentVideoId {
+                    // Current video
+                    player.volume = Float(1 - abs(progress))
+                    if !player.isPlaying && self.readyToPlayStates[videoId] == true {
+                        player.playImmediately(atRate: 1.0)
+                    }
+                } else if videoId == nextVideoId && progress > 0 {
+                    // Next video during downward scroll
+                    player.volume = Float(progress)
+                    if !player.isPlaying && self.readyToPlayStates[videoId] == true {
+                        player.playImmediately(atRate: 1.0)
+                    }
+                } else if videoId == prevVideoId && progress < 0 {
+                    // Previous video during upward scroll
+                    player.volume = Float(-progress)
+                    if !player.isPlaying && self.readyToPlayStates[videoId] == true {
+                        player.playImmediately(atRate: 1.0)
+                    }
+                } else {
+                    // Any other video should be paused
+                    if player.isPlaying {
+                        player.pause()
+                        player.seek(to: .zero)
+                    }
+                    player.volume = 0
+                }
             }
         }
     }
 
     func handleIndexChange(_ newIndex: Int) {
-        Log.p(Log.video, Log.event, "Beginning index change handling - New Index: \(newIndex)")
+        // Don't process index changes when inactive
+        guard isActive else { return }
         
-        // Cancel any existing swipe handling task
-        swipeHandlingTask?.cancel()
-        isHandlingSwipe = true
+        guard newIndex >= 0 && newIndex < videos.count else { return }
         
-        // Create new task for this swipe
-        swipeHandlingTask = Task {
-            defer { 
-                // Ensure we reset the flag when the task completes or is cancelled
-                isHandlingSwipe = false 
-            }
+        let oldIndex = currentIndex
+        currentIndex = newIndex
+        
+        // Serialize playback state changes
+        playerSerializationQueue.async { [weak self] in
+            guard let self = self else { return }
             
-            // Validate index bounds
-            guard newIndex >= 0 && newIndex < videos.count else {
-                Log.p(Log.video, Log.event, Log.error, "Invalid index: \(newIndex), videos count: \(videos.count)")
-                return
-            }
-
-            // 1. Save position and pause previous video
-            if videos.indices.contains(currentIndex), let oldPlayer = preloadedPlayers[videos[currentIndex].id] {
-                videoPositions[videos[currentIndex].id] = oldPlayer.currentTime()
-                oldPlayer.pause() // Targeted pause of the previous video
-                Log.p(Log.video, Log.event, "Pausing and saving position for video: \(videos[currentIndex].id) at position: \(oldPlayer.currentTime().seconds)")
-            }
-
-            // 2. Update current index
-            currentIndex = newIndex
-            Log.p(Log.video, Log.event, "Updated current index to: \(newIndex)")
-
-            // 3. Handle current video - PRIORITY
-            let currentVideo = videos[newIndex]
-            if let player = preloadedPlayers[currentVideo.id] {
-                // Restore previous position or start from beginning
-                let position = videoPositions[currentVideo.id] ?? .zero
-                
-                // Ensure we're on the main thread for playback
-                Task { @MainActor in
-                    player.seek(to: position)
-                    player.play()
-                    Log.p(Log.video, Log.event, "Playing existing player for current video: \(currentVideo.id) from position: \(position.seconds)")
-                }
-            } else {
-                Log.p(Log.video, Log.event, "Preloading current video: \(currentVideo.id)")
-                preloadVideo(currentVideo)
-            }
-
-            // 4. Start a background task for non-critical operations
-            Task {
-                // Wait for swipe animation to complete (typical iOS animation duration is 0.3s)
-                // Adding a bit more time (0.5s total) to ensure complete smoothness
-                try? await Task.sleep(nanoseconds: 500_000_000)  // 500ms delay
-                
-                // Check for pagination first since it's most important for UX
-                if newIndex >= videos.count - 4 {
-                    Log.p(Log.video, Log.event, "Near end of list, triggering pagination")
-                    await MainActor.run {
-                        loadMoreVideos()
+            // Handle playback states
+            for (videoId, player) in self.players {
+                if videoId == self.videos[newIndex].id {
+                    // New current video
+                    if self.readyToPlayStates[videoId] == true {
+                        player.volume = 1
+                        player.playImmediately(atRate: 1.0)
                     }
-                }
-
-                // Calculate which videos need preloading (excluding current and already loaded)
-                var adjacentIndices = Set<Int>()
-                // Add indices before current
-                for offset in 1...3 {
-                    adjacentIndices.insert(max(0, newIndex - offset))
-                }
-                // Add current index
-                adjacentIndices.insert(newIndex)
-                // Add indices after current
-                for offset in 1...3 {
-                    adjacentIndices.insert(min(videos.count - 1, newIndex + offset))
-                }
-                
-                let preloadIndices = adjacentIndices.filter { index in
-                    let video = videos[index]
-                    return preloadedPlayers[video.id] == nil // Only preload if not already loaded
-                }
-                
-                if !preloadIndices.isEmpty {
-                    Log.p(Log.video, Log.event, "Preloading adjacent indices: \(preloadIndices)")
-                    
-                    // Preload one at a time to avoid overwhelming the system
-                    for index in preloadIndices {
-                        let video = videos[index]
-                        await MainActor.run {
-                            preloadVideo(video)
-                        }
-                        // Small delay between each preload to maintain smoothness
-                        try? await Task.sleep(nanoseconds: 100_000_000)  // 100ms delay
+                } else if videoId == self.videos[oldIndex].id {
+                    // Previous current video
+                    if player.isPlaying {
+                        player.pause()
+                        player.seek(to: .zero)
                     }
-                }
-
-                // Finally, cleanup inactive players
-                await MainActor.run {
-                    cleanupInactivePlayers(around: newIndex)
+                    player.volume = 0
+                } else {
+                    // Any other video
+                    if player.isPlaying {
+                        player.pause()
+                        player.seek(to: .zero)
+                    }
+                    player.volume = 0
                 }
             }
         }
+        
+        // Still preload videos even when inactive to ensure smooth transitions
+        let newVideo = videos[newIndex]
+        if players[newVideo.id] == nil {
+            preparePlayer(for: newVideo)
+        }
+        
+        // Preload videos in the preload window
+        let preloadStart = max(0, newIndex - (activeWindowSize + preloadWindowSize))
+        let preloadEnd = min(videos.count - 1, newIndex + (activeWindowSize + preloadWindowSize))
+        
+        for i in preloadStart...preloadEnd {
+            preparePlayer(for: videos[i])
+        }
+        
+        // Clean up players that are too far away
+        cleanupDistantPlayers()
     }
-
-    private func cleanupInactivePlayers(around index: Int) {
-        // ALWAYS keep the current video's player
-        var keepIds = Set([videos[index].id])
-        
-        // Add adjacent videos we want to keep (increased window further)
-        var keepIndices = Set<Int>()
-        // Add indices before current
-        for offset in 1...3 {
-            keepIndices.insert(max(0, index - offset))
-        }
-        // Add current index
-        keepIndices.insert(index)
-        // Add indices after current
-        for offset in 1...3 {
-            keepIndices.insert(min(videos.count - 1, index + offset))
-        }
-        
-        keepIds.formUnion(keepIndices.compactMap { videos.indices.contains($0) ? videos[$0].id : nil })
-        Log.p(Log.video, Log.event, "Keeping video IDs: \(keepIds)")
-
-        // Remove players and positions not in keepIds
-        for id in preloadedPlayers.keys where !keepIds.contains(id) {
-            Log.p(Log.video, Log.event, "Cleaning up player for video: \(id)")
-            if let player = preloadedPlayers[id] {
-                player.pause()  // Ensure playback is stopped
-                player.replaceCurrentItem(with: nil)  // Remove the item to free up resources
-                Log.p(Log.video, Log.event, "Stopped playback and cleared item for video: \(id)")
+    
+    private func cleanupDistantPlayers() {
+        playerSerializationQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            for (videoId, player) in self.players {
+                guard let index = self.videos.firstIndex(where: { $0.id == videoId }),
+                      abs(index - self.currentIndex) > (self.activeWindowSize + self.preloadWindowSize) else { continue }
+                
+                if player.isPlaying {
+                    player.pause()
+                }
+                player.replaceCurrentItem(with: nil)
+                self.players.removeValue(forKey: videoId)
+                self.playerItemObservations.removeValue(forKey: videoId)
+                self.readyToPlayStates.removeValue(forKey: videoId)
             }
-            preloadedPlayers[id] = nil
-            playerSubjects[id]?.send(nil)
-            playerSubjects[id] = nil
-            videoPositions.removeValue(forKey: id)  // Clean up positions too
-            Log.p(Log.video, Log.event, "Removed all references for video: \(id)")
         }
     }
 
@@ -307,6 +313,12 @@ class VerticalVideoHandler: ObservableObject {
     func updateVideoPosition(for videoId: String, position: CMTime) {
         videoPositions[videoId] = position
     }
+
+    func isActiveIndex(_ index: Int) -> Bool {
+        let activeRange = max(0, currentIndex - activeWindowSize)...min(videos.count - 1, currentIndex + activeWindowSize)
+        Log.p(Log.video, Log.event, "Checking if index \(index) is active. Current index: \(currentIndex), Active range: \(activeRange)")
+        return activeRange.contains(index)
+    }
 }
 
 struct VideoVerticalFeed: View {
@@ -314,6 +326,7 @@ struct VideoVerticalFeed: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var dragOffset = CGSize.zero
     @State private var dragDirection: DragDirection = .none
+    @State private var scrollPositionThreshold = 1 // Minimum index change required to trigger update
     @Environment(\.dismiss) private var dismiss
     
     private enum DragDirection {
@@ -323,7 +336,7 @@ struct VideoVerticalFeed: View {
     var body: some View {
         let fullScreenSize = UIScreen.main.bounds.size
         
-        GeometryReader { _ in  // We'll use fullScreenSize instead of geometry
+        GeometryReader { geometry in
             ZStack {
                 Color.black.ignoresSafeArea()
 
@@ -340,41 +353,66 @@ struct VideoVerticalFeed: View {
                                 )
                                 .id(handler.videos[index].id)
                                 .frame(width: fullScreenSize.width, height: fullScreenSize.height)
-                                .border(Color.blue.opacity(0.5), width: 2)  // Debug border
                             }
                         }
-                        .border(Color.red.opacity(0.5), width: 2)  // Debug border for LazyVStack
                     }
                     .scrollTargetLayout()
                     .scrollTargetBehavior(.paging)
-                    .scrollPosition(id: .init(get: {
-                        handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex].id : nil
-                    }, set: { newPosition in
-                        if let newPosition,
-                           let index = handler.videos.firstIndex(where: { $0.id == newPosition }),
-                           index != handler.currentIndex {  // Only trigger if index actually changed
-                            handler.handleIndexChange(index)
+                    .scrollPosition(id: .init(
+                        get: {
+                            handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex].id : nil
+                        },
+                        set: { newPosition in
+                            guard let newPosition = newPosition,
+                                  let newIndex = handler.videos.firstIndex(where: { $0.id == newPosition }) else {
+                                return
+                            }
+                            
+                            // Only trigger handleIndexChange if the change exceeds the threshold
+                            if abs(newIndex - handler.currentIndex) >= scrollPositionThreshold {
+                                handler.handleIndexChange(newIndex)
+                            }
                         }
-                    }))
-                    .ignoresSafeArea()
+                    ))
+                    .simultaneousGesture(
+                        DragGesture()
+                            .onChanged { value in
+                                let progress = value.translation.height / fullScreenSize.height
+                                handler.updateScrollProgress(-progress) // Invert because scroll up means next video
+                            }
+                            .onEnded { _ in
+                                handler.updateScrollProgress(0)
+                            }
+                    )
                     .scrollDisabled(dragDirection == .horizontal)
                 }
             }
         }
-        .frame(width: fullScreenSize.width, height: fullScreenSize.height)  // Force full screen size
+        .frame(width: fullScreenSize.width, height: fullScreenSize.height)
         .ignoresSafeArea()
         .onAppear {
             Log.p(Log.video, Log.start, "Vertical video feed appeared")
-            if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
-               let player = handler.getPlayer(for: currentVideo) {
-                player.play()
-            }
+            handler.setActive(true)
         }
         .onDisappear {
             Log.p(Log.video, Log.exit, "Vertical video feed disappeared")
-            if let currentVideo = handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex] : nil,
-               let player = handler.getPlayer(for: currentVideo) {
-                player.pause()
+            handler.setActive(false)
+        }
+        // Add scene phase handling
+        .onChange(of: scenePhase) { _, newPhase in
+            switch newPhase {
+            case .background, .inactive:
+                handler.setActive(false)
+            case .active:
+                // Only activate if we're actually visible
+                // This prevents activation during TabView preloading
+                if let window = UIApplication.shared.windows.first(where: { $0.isKeyWindow }),
+                   let rootViewController = window.rootViewController,
+                   rootViewController.view.subviews.contains(where: { $0.bounds.intersects(window.bounds) }) {
+                    handler.setActive(true)
+                }
+            @unknown default:
+                break
             }
         }
     }
@@ -402,7 +440,7 @@ struct VideoVerticalPlayer: View {
     var body: some View {
         ZStack {
             if let player = player {
-                CustomVideoPlayer(player: player)
+                VerticalFeedVideoPlayer(player: player)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .layoutPriority(1)
             } else {
@@ -425,5 +463,35 @@ struct VideoVerticalPlayer: View {
         .frame(width: size.width, height: size.height)
         .clipped() // Ensure content doesn't overflow
         .background(Color.black)
+    }
+}
+
+struct VerticalFeedVideoPlayer: UIViewControllerRepresentable {
+    let player: AVPlayer
+
+    func makeUIViewController(context: Context) -> AVPlayerViewController {
+        let controller = AVPlayerViewController()
+        controller.player = player
+        controller.showsPlaybackControls = false
+        controller.videoGravity = .resizeAspectFill
+        controller.view.backgroundColor = .black
+        
+        // Prevent the controller from trying to access transform properties
+        if let playerLayer = controller.view.layer as? AVPlayerLayer {
+            playerLayer.videoGravity = .resizeAspectFill
+        }
+        
+        return controller
+    }
+
+    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {
+        // No updates needed
+    }
+}
+
+// Add isPlaying extension for AVPlayer
+private extension AVPlayer {
+    var isPlaying: Bool {
+        return rate != 0 && error == nil
     }
 } 
