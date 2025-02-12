@@ -108,12 +108,12 @@ class VerticalVideoHandler: ObservableObject {
         playerSerializationQueue.async { [weak self] in
             guard let self = self else {
                 UserDefaults.standard.removeObject(forKey: preparationKey)
-            return 
-        }
+                return
+            }
 
             // Create a task with timeout
-        Task {
-            do {
+            Task {
+                do {
                     // Check URL cache first
                     let url: URL
                     if let cachedURL = self.urlCache[video.id] {
@@ -135,18 +135,21 @@ class VerticalVideoHandler: ObservableObject {
                         
                         guard let fetchedURL = result else {
                             UserDefaults.standard.removeObject(forKey: preparationKey)
-                    return
-                }
-                
+                            return
+                        }
+                        
                         // Cache the URL
                         url = fetchedURL
-                await MainActor.run {
+                        await MainActor.run {
                             self.urlCache[video.id] = url
                         }
                     }
                     
                     let asset = AVURLAsset(url: url, options: [
-                        AVURLAssetPreferPreciseDurationAndTimingKey: true
+                        AVURLAssetPreferPreciseDurationAndTimingKey: true,
+                        "AVURLAssetHTTPHeaderFieldsKey": [
+                            "Cache-Control": "public, max-age=3600"
+                        ]
                     ])
                     
                     // Load essential properties with timeout
@@ -208,7 +211,7 @@ class VerticalVideoHandler: ObservableObject {
                     }
                 } catch let error as TimeoutError {
                     Log.p(Log.video, Log.event, Log.error, "Timeout preparing player: \(error.localizedDescription)")
-            } catch {
+                } catch {
                     Log.p(Log.video, Log.event, Log.error, "Error preparing player: \(error)")
                 }
                 
@@ -317,8 +320,8 @@ class VerticalVideoHandler: ObservableObject {
                     player.volume = Float(-progress)
                     if !player.isPlaying && self.readyToPlayStates[videoId] == true {
                         player.playImmediately(atRate: 1.0)
-                }
-            } else {
+                    }
+                } else {
                     // Any other video should be paused
                     if player.isPlaying {
                         player.pause()

@@ -141,6 +141,8 @@ final class VideoUploadService {
                     let metadata = StorageMetadata()
                     metadata.contentType = "video/mp4"
                     metadata.customMetadata = ["fileSize": "\(fileSize)"]
+                    // Set Cache-Control header for 1 hour caching
+                    metadata.cacheControl = "public, max-age=3600"
                     
                     Log.p(Log.upload, Log.uploadAction, "Creating upload task")
                     let uploadTask = videoRef.putFile(from: url, metadata: metadata)
