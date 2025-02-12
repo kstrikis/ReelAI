@@ -1,7 +1,7 @@
 import FirebaseFirestore
 import Foundation
 
-struct Video: Codable, Identifiable {
+struct Video: Identifiable, Codable {
     let id: String
     let ownerId: String
     let username: String
@@ -10,6 +10,11 @@ struct Video: Codable, Identifiable {
     let createdAt: Date
     let updatedAt: Date
     let engagement: Engagement
+    
+    // Add computed property for file path
+    var filePath: String {
+        return "videos/\(ownerId)/\(id).mp4"
+    }
     
     var computedMediaUrl: String {
         let bucket = "reelai-53f8b.firebasestorage.app"

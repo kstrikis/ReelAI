@@ -28,12 +28,14 @@ struct ContentView: View {
                         .tag(1)
                         
                     // Video Feed (Right)
-                    UnifiedVideoFeed()
+                    VideoVerticalFeed()
                         .tag(2)
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
                 .onChange(of: selectedTab) { _, newValue in
                     Log.p(Log.app, Log.event, "User switched to tab: \(newValue)")
+                    // Update video feed active state
+                    VerticalVideoHandler.shared.setActive(newValue == 2)
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigationBarTrailing) {
@@ -106,7 +108,7 @@ struct ContentView: View {
         
         let db = Firestore.firestore()
         Log.p(Log.firebase, Log.event, "Using Firestore instance from GoogleService-Info.plist")
-        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID)")
+        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID ?? "unknown")")
         
         // Set with server timestamp to ensure server sync
         let docRef = db.collection("test_collection").document("test_document")

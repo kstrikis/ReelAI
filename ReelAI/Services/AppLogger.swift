@@ -232,15 +232,10 @@ enum Log {
         // Add message
         log += " \(message)"
         
-        // Both print and os_log for reliability, wrapped in do-catch
-        do {
-            print(log)
-            let logger = Logger(subsystem: subsystem, category: context.name)
-            logger.debug("\(log, privacy: .public)")
-        } catch {
-            // If all else fails, use print with a simple format
-            print("🚨 Logger failed, raw message: \(message)")
-        }
+        // Print and os_log for reliability
+        print(log)
+        let logger = Logger(subsystem: subsystem, category: context.name)
+        logger.debug("\(log, privacy: .public)")
     }
     
     // MARK: - Convenience Properties
