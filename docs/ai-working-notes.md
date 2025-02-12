@@ -421,3 +421,29 @@ Next Steps:
 1. Remove redundant preloadVideosAround() calls
 2. Research and implement correct AVAssetTrack transform loading
 3. Verify resource cleanup on video transitions
+
+## [Date] - Prioritize Player Preparation
+
+**Problem:** Even with the `@StateObject` fix, there was still a small chance of encountering a black screen if the user swiped very quickly to a video whose player hadn't been prepared yet.
+
+**Solution:** Modified the `handleIndexChange` function to prioritize player preparation based on proximity to the current index.  The code now sorts the indices within the preload window by their distance from the current index and prepares players in that order. This ensures that players for videos closer to the current view are prepared first, significantly reducing the likelihood of encountering an unprepared player.
+
+**Configuration Changes:** None.
+
+## [Date] - Fix Load More Videos Logic
+
+**Problem:** The "load more videos" functionality was not triggering correctly. The `handleIndexChange` function was checking `videos.count` *before* the `videos` array was populated by the initial `loadVideos` call, leading to an incorrect threshold calculation.
+
+**Solution:** Modified the `VerticalFeed` view's `.onAppear` to `await` the `loadVideos()` call within a `Task`. This ensures that the `videos` array is populated *before* `handleIndexChange` is called, allowing the `loadMoreThreshold` check to work as intended.
+
+**Configuration Changes:** None.
+
+## [Date] - Add Video File Path and Fix Logging
+
+**Problem:** The code was referencing a non-existent `filePath` property on `Video` and using undefined logging constants.
+
+**Solution:** 
+1. Added a computed `filePath` property to the `Video` model that generates the correct Firebase Storage path
+2. Updated logging constants in `FirestoreService` to use the standard `Log.firebase` and `Log.read` categories
+
+**Configuration Changes:** None.

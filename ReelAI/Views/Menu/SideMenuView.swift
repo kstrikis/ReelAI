@@ -5,6 +5,7 @@ struct SideMenuView: View {
     @Binding var isPresented: Bool
     @State private var showProfile = false
     @State private var showDebugMenu = false
+    @State private var showSettings = false
     @State private var stars: [(position: CGPoint, opacity: Double)] = []
 
     // Deep space colors matching AI Tools view exactly
@@ -77,7 +78,7 @@ struct SideMenuView: View {
                                 systemImage: "gear",
                                 action: {
                                     Log.p(Log.app, Log.event, "User selected Settings menu item")
-                                    // TODO: Show settings
+                                    showSettings = true
                                 }
                             )
 
@@ -170,6 +171,9 @@ struct SideMenuView: View {
         }
         .sheet(isPresented: $showProfile) {
             ProfileView()
+        }
+        .sheet(isPresented: $showSettings) {
+            SettingsView()
         }
         #if DEBUG
         .sheet(isPresented: $showDebugMenu) {

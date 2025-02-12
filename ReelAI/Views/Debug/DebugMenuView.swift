@@ -7,7 +7,6 @@ import FirebaseAuth
 struct DebugMenuView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showVideoList = false
-    @State private var showVideoFeed = false
     @State private var showVerticalFeed = false
     @StateObject private var viewModel = DebugViewModel()
     
@@ -43,13 +42,6 @@ struct DebugMenuView: View {
                     showVideoList = true
                 }) {
                     Label("Video List", systemImage: "play.rectangle.on.rectangle")
-                }
-                
-                Button(action: {
-                    Log.p(Log.debug, Log.analyze, "Opening consolidated video feed")
-                    showVideoFeed = true
-                }) {
-                    Label("Consolidated Feed", systemImage: "play.square.stack.fill")
                 }
 
                 Button(action: {
@@ -168,13 +160,6 @@ struct DebugMenuView: View {
             NavigationView {
                 VideoListView()
                     .navigationTitle("Debug: Video List")
-                    .navigationBarTitleDisplayMode(.inline)
-            }
-        }
-        .sheet(isPresented: $showVideoFeed) {
-            NavigationView {
-                UnifiedVideoFeed()
-                    .navigationTitle("Consolidated Video Feed")
                     .navigationBarTitleDisplayMode(.inline)
             }
         }
