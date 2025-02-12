@@ -108,7 +108,7 @@ struct ContentView: View {
         
         let db = Firestore.firestore()
         Log.p(Log.firebase, Log.event, "Using Firestore instance from GoogleService-Info.plist")
-        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID)")
+        Log.p(Log.firebase, Log.event, "Project ID: \(db.app.options.projectID ?? "unknown")")
         
         // Set with server timestamp to ensure server sync
         let docRef = db.collection("test_collection").document("test_document")
