@@ -488,8 +488,11 @@ final class FirestoreService {
     func fetchRandomVideos(count: Int) async throws -> [Video] {
         Log.p(Log.firebase, Log.read, "Fetching \(count) random videos")
         
-        // Get all videos in a single query
-        let snapshot = try await db.collection("videos").getDocuments()
+        // Get videos with server-side random ordering
+        let snapshot = try await db.collection("videos")
+            .order(by: "createdAt", descending: true)  // First order by date
+            .getDocuments()
+            
         let allVideos = snapshot.documents.compactMap { document -> Video? in
             do {
                 return try Video(from: document)
@@ -504,21 +507,10 @@ final class FirestoreService {
             return []
         }
         
-        // Randomly select the requested number of videos
-        var randomVideos: [Video] = []
-        let requestedCount = min(count, allVideos.count)
-        
-        // Create a mutable copy of indices that we can remove from
-        var availableIndices = Array(0..<allVideos.count)
-        
-        while randomVideos.count < requestedCount && !availableIndices.isEmpty {
-            let randomIndex = Int.random(in: 0..<availableIndices.count)
-            let videoIndex = availableIndices.remove(at: randomIndex)
-            randomVideos.append(allVideos[videoIndex])
-        }
-        
-        Log.p(Log.firebase, Log.read, Log.success, "Successfully fetched \(randomVideos.count) random videos")
-        return randomVideos
+        // Take the first 'count' videos from the ordered list
+        let resultVideos = Array(allVideos.prefix(count))
+        Log.p(Log.firebase, Log.read, Log.success, "Successfully fetched \(resultVideos.count) videos")
+        return resultVideos
     }
 
     func getVideoDownloadURL(videoId: String) async throws -> URL? {

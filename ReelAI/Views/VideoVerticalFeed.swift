@@ -26,7 +26,7 @@ class VerticalVideoHandler: ObservableObject {
     private var playerItemObservations: [String: AnyCancellable] = [:]
     private var readyToPlayStates: [String: Bool] = [:]
     private let playerSerializationQueue = DispatchQueue(label: "com.reelai.player.serialization")
-    
+
     // Track video positions
     private var videoPositions: [String: CMTime] = [:]
 
@@ -37,112 +37,212 @@ class VerticalVideoHandler: ObservableObject {
     // Track scroll progress for smooth audio transitions
     @Published private var scrollProgress: CGFloat = 0
     
+    // Add URL cache
+    private var urlCache: [String: URL] = [:]
+    
+    // Constants for video loading
+    private let batchSize = 6 // Number of videos to load at a time
+    private let loadMoreThreshold = 3 // Load more when this many videos from the end
+    
     private init() {
         // Ensure we start inactive
         isActive = false
-        loadInitialVideos()
+        loadVideos()
     }
 
-    func loadInitialVideos() {
-        Log.p(Log.video, Log.event, "Loading initial batch of random videos")
+    func loadVideos() {
+        guard !isLoading else { return }
+        
         isLoading = true
+        Log.p(Log.video, Log.event, "Loading videos")
         
         Task {
             do {
-                let initialCheck = try await FirestoreService.shared.fetchVideoBatch(startingAfter: nil, limit: 1)
-                if initialCheck.isEmpty {
-                    Log.p(Log.video, Log.event, "No videos found, attempting to seed...")
-                    try await FirestoreService.shared.seedVideos()
-                }
-
-                let batch = try await FirestoreService.shared.fetchRandomVideos(count: 5)
-                Log.p(Log.video, Log.event, "Received \(batch.count) random videos")
-
-                await MainActor.run {
-                    self.videos = batch
-                    self.isLoading = false
-                    self.isFirstVideoReady = !batch.isEmpty
-                    if !batch.isEmpty {
-                        // Prepare initial set of videos
-                        for i in 0..<min(3, batch.count) {
-                            self.preparePlayer(for: batch[i])
-                        }
+                // Check if we need to seed videos (only on first load when videos array is empty)
+                if videos.isEmpty {
+                    let initialCheck = try await FirestoreService.shared.fetchVideoBatch(startingAfter: nil, limit: 1)
+                    if initialCheck.isEmpty {
+                        Log.p(Log.video, Log.event, "No videos found, attempting to seed...")
+                        try await FirestoreService.shared.seedVideos()
                     }
                 }
+
+                // Get the last video for pagination
+                let lastVideo = videos.last
+                let newVideos = try await FirestoreService.shared.fetchVideoBatch(startingAfter: lastVideo, limit: batchSize)
+                Log.p(Log.video, Log.event, "Received \(newVideos.count) videos")
+                
+                await MainActor.run {
+                    // If this is the first load, set the videos array
+                    // Otherwise append to it
+                    if self.videos.isEmpty {
+                        self.videos = newVideos
+                        self.isFirstVideoReady = !newVideos.isEmpty
+                    } else {
+                        self.videos.append(contentsOf: newVideos)
+                    }
+                    
+                    // Preload the new videos
+                    for i in 0..<min(5, newVideos.count) {
+                        self.preparePlayer(for: newVideos[i])
+                    }
+                    
+                    self.isLoading = false
+                }
             } catch {
-                Log.p(Log.video, Log.event, Log.error, "Initial load failed: \(error)")
-                await MainActor.run { isLoading = false }
+                Log.p(Log.video, Log.event, Log.error, "Failed to load videos: \(error)")
+                await MainActor.run { self.isLoading = false }
             }
         }
     }
 
     private func preparePlayer(for video: Video) {
-        // Don't prepare if we already have this player
+        // Don't prepare if we already have this player or if preparation is in progress
         guard players[video.id] == nil else { return }
         
+        // Use atomic flag to prevent duplicate preparation
+        let preparationKey = "preparing_\(video.id)"
+        guard !UserDefaults.standard.bool(forKey: preparationKey) else { return }
+        UserDefaults.standard.set(true, forKey: preparationKey)
+        
+        playerSerializationQueue.async { [weak self] in
+            guard let self = self else {
+                UserDefaults.standard.removeObject(forKey: preparationKey)
+            return 
+        }
+
+            // Create a task with timeout
         Task {
             do {
-                guard let url = try await FirestoreService.shared.getVideoDownloadURL(videoId: video.id) else {
-                    Log.p(Log.video, Log.event, Log.error, "Failed to get download URL")
+                    // Check URL cache first
+                    let url: URL
+                    if let cachedURL = self.urlCache[video.id] {
+                        url = cachedURL
+                    } else {
+                        let result = try await withThrowingTaskGroup(of: URL?.self) { group in
+                            group.addTask {
+                                try await self.withTimeout(seconds: 10) {
+                                    try await FirestoreService.shared.getVideoDownloadURL(videoId: video.id)
+                                }
+                            }
+                            
+                            guard let fetchedURL = try await group.next() else {
+                                Log.p(Log.video, Log.event, Log.error, "Failed to get download URL or timed out")
+                                return Optional<URL>.none
+                            }
+                            return fetchedURL
+                        }
+                        
+                        guard let fetchedURL = result else {
+                            UserDefaults.standard.removeObject(forKey: preparationKey)
                     return
                 }
-
-                let asset = AVURLAsset(url: url)
                 
-                // Load essential properties using modern async API
-                _ = try await asset.load(.tracks)
-                _ = try await asset.load(.duration)
-                
-                // Configure player item with loaded asset
-                let playerItem = AVPlayerItem(asset: asset)
-                let player = AVPlayer(playerItem: playerItem)
-                
-                // Basic configuration for smooth playback
-                player.automaticallyWaitsToMinimizeStalling = false
-                player.volume = 0  // Start muted, will unmute when current
-                
-                // Set up looping
-                NotificationCenter.default.addObserver(
-                    forName: .AVPlayerItemDidPlayToEndTime,
-                    object: playerItem,
-                    queue: .main
-                ) { [weak player] _ in
-                    player?.seek(to: .zero)
-                    // Only auto-play if we're active
-                    if self.isActive {
-                        player?.play()
-                    }
-                }
-                
-                // Observe player item status
-                let statusObservation = playerItem.publisher(for: \.status)
-                    .removeDuplicates()
-                    .receive(on: DispatchQueue.main)
-                    .sink { [weak self] status in
-                        guard let self = self else { return }
-                        switch status {
-                        case .readyToPlay:
-                            self.readyToPlayStates[video.id] = true
-                            // Only start playing if we're active and this is the current video
-                            if self.isActive && video.id == self.videos[self.currentIndex].id {
-                                player.volume = 1
-                                player.play()
-                            }
-                        case .failed:
-                            Log.p(Log.video, Log.event, Log.error, "Player item failed: \(String(describing: playerItem.error))")
-                            self.readyToPlayStates[video.id] = false
-                        default:
-                            break
+                        // Cache the URL
+                        url = fetchedURL
+                await MainActor.run {
+                            self.urlCache[video.id] = url
                         }
                     }
-                
-                await MainActor.run {
-                    self.players[video.id] = player
-                    self.playerItemObservations[video.id] = statusObservation
-                }
+                    
+                    let asset = AVURLAsset(url: url, options: [
+                        AVURLAssetPreferPreciseDurationAndTimingKey: true
+                    ])
+                    
+                    // Load essential properties with timeout
+                    try await self.withTimeout(seconds: 5) {
+                        async let tracks = asset.load(.tracks)
+                        async let duration = asset.load(.duration)
+                        _ = try await (tracks, duration)
+                    }
+                    
+                    // Configure player item with loaded asset
+                    let playerItem = AVPlayerItem(asset: asset)
+                    
+                    // Switch to main thread for UI setup
+                    await MainActor.run {
+                        let player = AVPlayer(playerItem: playerItem)
+                        
+                        // Basic configuration for smooth playback
+                        player.automaticallyWaitsToMinimizeStalling = false
+                        player.volume = 0  // Start muted, will unmute when current
+                        
+                        // Set up looping
+                        NotificationCenter.default.addObserver(
+                            forName: .AVPlayerItemDidPlayToEndTime,
+                            object: playerItem,
+                            queue: .main
+                        ) { [weak player] _ in
+                            player?.seek(to: .zero)
+                            // Only auto-play if we're active
+                            if self.isActive {
+                                player?.play()
+                            }
+                        }
+                        
+                        // Observe player item status
+                        let statusObservation = playerItem.publisher(for: \.status)
+                            .removeDuplicates()
+                            .receive(on: DispatchQueue.main)
+                            .sink { [weak self] status in
+                                guard let self = self else { return }
+                                switch status {
+                                case .readyToPlay:
+                                    Log.p(Log.video, Log.event, "Player ready for video: \(video.id)")
+                                    self.readyToPlayStates[video.id] = true
+                                    // Only start playing if we're active and this is the current video
+                                    if self.isActive && video.id == self.videos[self.currentIndex].id {
+                                        player.volume = 1
+                                        player.play()
+                                    }
+                                case .failed:
+                                    Log.p(Log.video, Log.event, Log.error, "Player item failed: \(String(describing: playerItem.error))")
+                                    self.readyToPlayStates[video.id] = false
+                                default:
+                                    break
+                                }
+                            }
+                        
+                        self.players[video.id] = player
+                        self.playerItemObservations[video.id] = statusObservation
+                    }
+                } catch let error as TimeoutError {
+                    Log.p(Log.video, Log.event, Log.error, "Timeout preparing player: \(error.localizedDescription)")
             } catch {
-                Log.p(Log.video, Log.event, Log.error, "Player preparation failed: \(error)")
+                    Log.p(Log.video, Log.event, Log.error, "Error preparing player: \(error)")
+                }
+                
+                // Always clean up preparation flag
+                UserDefaults.standard.removeObject(forKey: preparationKey)
             }
+        }
+    }
+
+    // Helper for timeouts
+    private func withTimeout<T>(seconds: Double, operation: @escaping () async throws -> T) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
+                throw TimeoutError(seconds: seconds)
+            }
+            
+            guard let result = try await group.next() else {
+                throw TimeoutError(seconds: seconds)
+            }
+            
+            group.cancelAll()
+            return result
+        }
+    }
+
+    private struct TimeoutError: Error {
+        let seconds: Double
+        var localizedDescription: String {
+            "Operation timed out after \(seconds) seconds"
         }
     }
 
@@ -217,8 +317,8 @@ class VerticalVideoHandler: ObservableObject {
                     player.volume = Float(-progress)
                     if !player.isPlaying && self.readyToPlayStates[videoId] == true {
                         player.playImmediately(atRate: 1.0)
-                    }
-                } else {
+                }
+            } else {
                     // Any other video should be paused
                     if player.isPlaying {
                         player.pause()
@@ -238,6 +338,11 @@ class VerticalVideoHandler: ObservableObject {
         
         let oldIndex = currentIndex
         currentIndex = newIndex
+        
+        // Check if we need to load more videos
+        if newIndex >= videos.count - loadMoreThreshold {
+            loadVideos()
+        }
         
         // Serialize playback state changes
         playerSerializationQueue.async { [weak self] in
@@ -302,6 +407,7 @@ class VerticalVideoHandler: ObservableObject {
                 self.players.removeValue(forKey: videoId)
                 self.playerItemObservations.removeValue(forKey: videoId)
                 self.readyToPlayStates.removeValue(forKey: videoId)
+                self.urlCache.removeValue(forKey: videoId)  // Clean up cached URL
             }
         }
     }
@@ -346,13 +452,13 @@ struct VideoVerticalFeed: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(handler.videos.indices, id: \.self) { index in
-                                VideoVerticalPlayer(
-                                    video: handler.videos[index],
-                                    player: handler.getPlayer(for: handler.videos[index]),
-                                    size: fullScreenSize
-                                )
-                                .id(handler.videos[index].id)
-                                .frame(width: fullScreenSize.width, height: fullScreenSize.height)
+                                    VideoVerticalPlayer(
+                                        video: handler.videos[index],
+                                        player: handler.getPlayer(for: handler.videos[index]),
+                                        size: fullScreenSize
+                                    )
+                                    .id(handler.videos[index].id)
+                                    .frame(width: fullScreenSize.width, height: fullScreenSize.height)
                             }
                         }
                     }
@@ -363,14 +469,14 @@ struct VideoVerticalFeed: View {
                             handler.videos.indices.contains(handler.currentIndex) ? handler.videos[handler.currentIndex].id : nil
                         },
                         set: { newPosition in
-                            guard let newPosition = newPosition,
-                                  let newIndex = handler.videos.firstIndex(where: { $0.id == newPosition }) else {
-                                return
-                            }
-                            
-                            // Only trigger handleIndexChange if the change exceeds the threshold
-                            if abs(newIndex - handler.currentIndex) >= scrollPositionThreshold {
-                                handler.handleIndexChange(newIndex)
+                        guard let newPosition = newPosition,
+                              let newIndex = handler.videos.firstIndex(where: { $0.id == newPosition }) else {
+                            return
+                        }
+                        
+                        // Only trigger handleIndexChange if the change exceeds the threshold
+                        if abs(newIndex - handler.currentIndex) >= scrollPositionThreshold {
+                            handler.handleIndexChange(newIndex)
                             }
                         }
                     ))
@@ -425,7 +531,7 @@ struct VideoVerticalFeed: View {
             Text("No videos available")
                 .foregroundColor(.white)
             Button("Retry") {
-                handler.loadInitialVideos()
+                handler.loadVideos()
             }
             .foregroundColor(.blue)
         }
