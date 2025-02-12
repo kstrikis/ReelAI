@@ -106,6 +106,8 @@ struct AIToolsView: View {
     @ViewBuilder
     private func destinationView(for tool: AITool) -> some View {
         switch tool {
+        case .storyMaker:
+            StoryMakerView()
         case .publisher:
             PublishingView()
         default:

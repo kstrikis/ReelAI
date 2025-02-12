@@ -285,6 +285,36 @@ A debug tool has been implemented to maintain data integrity across Firebase ser
 
 # AI Working Notes
 
+## Latest Updates (2024-02-07)
+- Implemented basic Story Maker functionality:
+  - Created `Story` and `Scene` models for representing story data.
+  - Created `StoryService` to handle story generation (currently with mock data).
+  - Created `StoryMakerView` to display the generated story.
+  - Integrated `StoryMakerView` into `AIToolsView`.
+  - Added basic Firestore integration for saving stories.
+  - Added JSON representation to the `Story` model.
+  - Added comprehensive logging.
+
+## Configuration Notes
+- Story data is stored in a "stories" subcollection under each user in Firestore.
+
+## Debugging Notes
+- Currently using mock data for story generation. AI integration is the next step.
+- JSON representation is displayed in the UI for debugging purposes.
+
+## Decisions
+- Using `StateObject` for `StoryService` to ensure proper lifecycle management.
+- Storing stories in Firestore for persistence.
+- Generating JSON representation for easy integration with other AI tools.
+
+## Logging Standards
+- Using 📝 for Firestore-related logs.
+- Using 🤖 for AI-related logs.
+
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+# AI Working Notes
+
 ## Latest Updates
 - Added new AI Tools tab with placeholder features:
   - Story Maker (coming soon)
