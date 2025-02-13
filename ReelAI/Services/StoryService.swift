@@ -8,6 +8,7 @@ class StoryService: ObservableObject {
     @Published var previousStories: [Story] = []
     private var cancellables = Set<AnyCancellable>()
     private let db = Firestore.firestore()
+    private let langChain = LangChainService.shared
     
     init() {
         Log.p(Log.ai_story, Log.start, "Initializing StoryService")
@@ -23,26 +24,36 @@ class StoryService: ObservableObject {
         // Log the start of story creation
         Log.p(Log.ai_story, Log.generate, "Creating story with prompt: \(prompt)")
         
-        // TODO: Replace with actual AI story generation
-        let newStory = generateMockStory(userId: userId, prompt: prompt)
-        
-        // Save to Firestore first
-        saveStoryToFirestore(newStory) { [weak self] result in
-            switch result {
-            case .success:
-                // Update local state after successful save
-                DispatchQueue.main.async {
-                    self?.currentStory = newStory
-                    if let story = self?.currentStory {
-                        self?.previousStories.insert(story, at: 0)
-                    }
-                    completion(.success(()))
-                }
-                Log.p(Log.ai_story, Log.generate, Log.success, "Story created and saved: \(newStory.title)")
+        Task {
+            do {
+                // Generate story using LangChain
+                let newStory = try await langChain.generateStory(from: prompt)
                 
-            case .failure(let error):
-                Log.error(Log.ai_story, error, "Failed to save story")
-                completion(.failure(error))
+                // Save to Firestore
+                try await saveStoryToFirestore(newStory) { [weak self] result in
+                    switch result {
+                    case .success:
+                        // Update local state after successful save
+                        DispatchQueue.main.async {
+                            self?.currentStory = newStory
+                            if let story = self?.currentStory {
+                                self?.previousStories.insert(story, at: 0)
+                            }
+                            completion(.success(()))
+                        }
+                        Log.p(Log.ai_story, Log.generate, Log.success, "Story created and saved: \(newStory.title)")
+                        
+                    case .failure(let error):
+                        Log.error(Log.ai_story, error, "Failed to save story")
+                        completion(.failure(error))
+                    }
+                }
+            } catch let error as LangChainError {
+                Log.error(Log.ai_story, error, "LangChain story generation failed")
+                completion(.failure(.aiGenerationError(error)))
+            } catch {
+                Log.error(Log.ai_story, error, "Unexpected error during story creation")
+                completion(.failure(.unexpectedError(error)))
             }
         }
     }
@@ -131,6 +142,8 @@ enum StoryServiceError: Error, LocalizedError {
     case encodingError
     case firestoreError(Error)
     case noUserLoggedIn
+    case aiGenerationError(Error)
+    case unexpectedError(Error)
     
     var errorDescription: String? {
         switch self {
@@ -140,6 +153,10 @@ enum StoryServiceError: Error, LocalizedError {
             return "Firestore error: \(error.localizedDescription)"
         case .noUserLoggedIn:
             return "No user is currently logged in"
+        case .aiGenerationError(let error):
+            return "AI Generation error: \(error.localizedDescription)"
+        case .unexpectedError(let error):
+            return "Unexpected error: \(error.localizedDescription)"
         }
     }
 } 
