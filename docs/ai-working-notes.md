@@ -282,6 +282,74 @@ A debug tool has been implemented to maintain data integrity across Firebase ser
   – Clear results after review
   – Use during development and testing phases
 
+──────────────────────────────────────────────
+8. Firebase Function Testing
+──────────────────────────────────────────────
+A. Story Generation Function
+To test the story generation function locally using Firebase emulators:
+
+1. Start the emulators:
+   ```bash
+   cd functions
+   npm run serve
+   ```
+
+2. Get a test auth token:
+   ```bash
+   curl http://127.0.0.1:5001/reelai-53f8b/us-central1/getTestToken
+   ```
+
+3. Call the generateStory function:
+   ```bash
+   curl -X POST \
+     -H "Content-Type: application/json" \
+     -H "Authorization: Bearer YOUR_TEST_TOKEN" \
+     -d '{"data":{"prompt":"Your story prompt here"}}' \
+     http://127.0.0.1:5001/reelai-53f8b/us-central1/generateStory
+   ```
+
+Response Format:
+```json
+{
+  "result": {
+    "success": true,
+    "result": {
+      "id": "story_timestamp",
+      "title": "Generated Story Title",
+      "template": "Original Prompt",
+      "backgroundMusicPrompt": "Story-wide background music description",
+      "scenes": [
+        {
+          "id": "scene1",
+          "sceneNumber": 1,
+          "narration": "Scene narration text",
+          "voice": "ElevenLabs Voice ID",
+          "visualPrompt": "Detailed visual description",
+          "audioPrompt": "Scene-specific sound effects",
+          "duration": 5
+        }
+        // ... more scenes
+      ]
+    }
+  }
+}
+```
+
+Key Points:
+- The function requires authentication (even in emulator)
+- Each story has both a story-wide background music prompt and scene-specific audio prompts
+- Scene durations are between 3-10 seconds
+- The AI generates 3-5 scenes per story
+- Visual prompts include camera angles and lighting details
+- Audio prompts are specific to each scene's action
+
+Common Testing Prompts:
+1. "A funny story about a cat learning to code"
+2. "An inspiring tale of a small robot finding its purpose"
+3. "A magical journey through a child's art coming to life"
+
+These prompts are good for testing as they exercise different aspects of the generation (humor, emotion, visual creativity).
+
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 # AI Working Notes
@@ -316,62 +384,54 @@ A debug tool has been implemented to maintain data integrity across Firebase ser
 
 # AI Working Notes
 
-## Latest Updates
-- Added new AI Tools tab with placeholder features:
-  - Story Maker (coming soon)
-  - Clip Maker (coming soon)
-  - Audio Maker (coming soon)
-  - Assembler (coming soon)
-  - Publisher (functional)
-- Implemented video publishing functionality:
-  - Video selection from library
-  - Title and description input
-  - Upload progress tracking
-  - Upload cancellation support
-  - Success/error handling
-- Modified tab structure:
-  - Camera (leftmost)
-  - AI Tools (center-left)
-  - Home (center-right)
-  - Menu (rightmost)
-- Fixed camera orientation by setting videoRotationAngle to 90 degrees
-- Standardized Firestore logging:
-  - All database operations must use dedicated logging functions (dbEntry, dbSuccess, etc.)
-  - Each log must include collection context
-  - Removed generic methodEntry/Exit usage for database operations
-  - Added comprehensive logging for all Firestore operations in FirestoreService
-- Implemented comprehensive logging system:
-  - Strategic logging at critical points:
-    - State transitions (view lifecycle, user sessions, data models)
-    - Asynchronous operation lifecycles
-    - External service interactions
-    - Resource management (allocation and cleanup)
-    - Critical user actions
-  - Breadcrumb trail approach for complex operations
-  - Context preservation for debugging under time pressure
-  - Recovery information in error logs
-  - Performance and memory monitoring
-  - Consistent formatting with component and operation identifiers
-- Camera improvements:
-  - Using front camera by default
-  - Added camera flip button
-  - Proper camera lifecycle management with tab changes
-  - Fixed video orientation issues
-  - Added gallery access button
-- Added video persistence and gallery:
-  - Created LocalVideoService for persistent video storage in Documents directory
-  - Implemented GalleryView with video thumbnails and playback
-  - Modified video recording flow to save locally before upload
-  - Videos now persist between app launches
-  - Gallery accessible via button in camera view
-- Remaining tasks:
-  - Address SwiftLint warnings in CameraManager.swift
-  - Add proper error handling for camera permissions
-  - Add loading states for camera initialization
-  - Add video deletion capability in gallery
-  - Add video sharing from gallery
-  - Implement video processing status indicators
-  - Consider adding video metadata editing (title, description) in gallery
+## Latest Updates (2024-02-14)
+- Fixed story generation parsing issues:
+  - Changed Story and StoryScene models to use String IDs instead of UUIDs to match Firebase function output
+  - Added custom ISO8601 date parsing strategy to handle timestamps with fractional seconds
+  - Added detailed error logging for JSON parsing failures
+  - Improved error messages for debugging decoding issues
+
+## Story Generation Notes
+1. ID Formats:
+   - Story IDs: `story_${timestamp}` format (e.g., "story_1739565107202")
+   - Scene IDs: `scene${number}` format (e.g., "scene1", "scene2")
+   - These formats are standardized between the Firebase function and iOS app
+
+2. Date Handling:
+   - Timestamps are in ISO8601 format with fractional seconds
+   - Example: "2025-02-14T20:44:25.265Z"
+   - Custom decoder handles both with and without fractional seconds
+
+3. Response Format:
+```json
+{
+  "success": true,
+  "result": {
+    "id": "story_timestamp",
+    "title": "Story Title",
+    "template": "default",
+    "backgroundMusicPrompt": "Music description...",
+    "scenes": [
+      {
+        "id": "scene1",
+        "sceneNumber": 1,
+        "narration": "Scene narration...",
+        "voice": "ElevenLabs Adam",
+        "visualPrompt": "Visual description...",
+        "audioPrompt": "Audio effects...",
+        "duration": 5
+      }
+    ],
+    "createdAt": "ISO8601 timestamp",
+    "userId": "Firebase Auth UID"
+  }
+}
+```
+
+4. Known Limitations:
+   - Scene IDs from the AI might come without underscores (e.g., "scene1" instead of "scene_1")
+   - Background music prompt is required in the response
+   - Scene duration must be between 3-10 seconds
 
 ## Configuration Notes
 - Using SwiftUI for UI components
@@ -463,18 +523,4 @@ Next Steps:
 
 ## [Date] - Fix Load More Videos Logic
 
-**Problem:** The "load more videos" functionality was not triggering correctly. The `handleIndexChange` function was checking `videos.count` *before* the `videos` array was populated by the initial `loadVideos` call, leading to an incorrect threshold calculation.
-
-**Solution:** Modified the `VerticalFeed` view's `.onAppear` to `await` the `loadVideos()` call within a `Task`. This ensures that the `videos` array is populated *before* `handleIndexChange` is called, allowing the `loadMoreThreshold` check to work as intended.
-
-**Configuration Changes:** None.
-
-## [Date] - Add Video File Path and Fix Logging
-
-**Problem:** The code was referencing a non-existent `filePath` property on `Video` and using undefined logging constants.
-
-**Solution:** 
-1. Added a computed `filePath` property to the `Video` model that generates the correct Firebase Storage path
-2. Updated logging constants in `FirestoreService` to use the standard `Log.firebase` and `Log.read` categories
-
-**Configuration Changes:** None.
+**Problem:** The "load more videos" functionality was not triggering correctly. The `handleIndexChange` function was checking `videos.count` *before* the `videos` array was populated by the initial `loadVideos`

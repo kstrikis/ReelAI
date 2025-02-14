@@ -11,7 +11,7 @@ import { HttpsError } from "firebase-functions/v2/https";
 
 // Initialize Firebase Admin with emulator configuration
 const app = initializeApp({
-  projectId: process.env.FIREBASE_PROJECT_ID || 'demo-project',
+  projectId: process.env.PROJECT_ID || "demo-project",
 });
 
 // Schema for story scene
@@ -39,7 +39,7 @@ const StorySchema = z.object({
 // Test function to verify prompt template functionality
 export const testPrompt = functions.https.onRequest(async (request, response) => {
   if (!process.env.FUNCTIONS_EMULATOR) {
-    response.status(404).send('Not available in production');
+    response.status(404).send("Not available in production");
     return;
   }
 
@@ -230,16 +230,17 @@ const createStoryChain = () => {
       ...scene,
       id: scene.id || `scene_${index + 1}`,
       sceneNumber: scene.sceneNumber || index + 1,
-      duration: scene.duration || 5, // Default duration if not specified
-      voice: scene.voice || "ElevenLabs Brian", // Default voice if not specified
-      audioPrompt: scene.audioPrompt || scene.audio || "Ambient background music", // Support both audioPrompt and audio field names
-      visualPrompt: scene.visualPrompt || scene.visual || "" // Support both visualPrompt and visual field names
+      duration: scene.duration || 5,
+      voice: scene.voice || "ElevenLabs Brian",
+      audioPrompt: scene.audioPrompt || scene.audio || "Ambient background music",
+      visualPrompt: scene.visualPrompt || scene.visual || ""
     }));
 
     return {
       ...parsedOutput,
       id: parsedOutput.id || `story_${Date.now()}`,
-      template: parsedOutput.template || "default",
+      template: parsedOutput.template || parsedOutput.prompt || "default",
+      backgroundMusicPrompt: parsedOutput.backgroundMusicPrompt || "Gentle ambient background music with a moderate tempo, creating a neutral but engaging atmosphere",
       scenes: enhancedScenes
     };
   };
@@ -256,8 +257,8 @@ const createStoryChain = () => {
       formattedPrompt: formatPrompt
     },
     async (data) => {
-        const promptValue = await data.formattedPrompt;
-        return promptValue;
+      const promptValue = await data.formattedPrompt;
+      return promptValue;
     },
     functionCallingChain,
     outputParser,
@@ -327,16 +328,16 @@ export const testEnv = functions.https.onRequest((request, response) => {
 // Helper endpoint to get a test token (only available in emulator)
 export const getTestToken = functions.https.onRequest(async (request, response) => {
   if (!process.env.FUNCTIONS_EMULATOR) {
-    response.status(404).send('Not available in production');
+    response.status(404).send("Not available in production");
     return;
   }
 
   try {
-    const testUid = 'test-user-1';
+    const testUid = "test-user-1";
     const customToken = await getAuth().createCustomToken(testUid);
     response.json({ customToken });
   } catch (error) {
-    console.error('Error creating test token:', error);
+    console.error("Error creating test token:", error);
     response.status(500).json({ error: error.message });
   }
 });
@@ -344,18 +345,18 @@ export const getTestToken = functions.https.onRequest(async (request, response) 
 // Helper endpoint to get auth status (only available in emulator)
 export const checkAuth = functions.https.onRequest(async (request, response) => {
   if (!process.env.FUNCTIONS_EMULATOR) {
-    response.status(404).send('Not available in production');
+    response.status(404).send("Not available in production");
     return;
   }
 
   const authHeader = request.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    response.status(401).json({ error: 'No token provided' });
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    response.status(401).json({ error: "No token provided" });
     return;
   }
 
   try {
-    const idToken = authHeader.split('Bearer ')[1];
+    const idToken = authHeader.split("Bearer ")[1];
     const decodedToken = await getAuth().verifyIdToken(idToken);
     response.json({
       uid: decodedToken.uid,
@@ -363,7 +364,7 @@ export const checkAuth = functions.https.onRequest(async (request, response) => 
       authenticated: true
     });
   } catch (error) {
-    console.error('Auth error:', error);
+    console.error("Auth error:", error);
     response.status(401).json({ error: error.message });
   }
 }); 

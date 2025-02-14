@@ -84,23 +84,23 @@ class StoryService: ObservableObject {
 
     // Generates a mock story for now.
     private func generateMockStory(userId: String, prompt: String) -> Story {
-        let storyId = UUID()
+        let storyId = "story_\(Int(Date().timeIntervalSince1970))"
         let scenes = [
-            StoryScene(id: UUID(), 
+            StoryScene(id: "scene_1", 
                   sceneNumber: 1, 
                   narration: "Based on prompt: \(prompt)\nOnce upon a time...", 
                   voice: "ElevenLabs Adam", 
                   visualPrompt: "A dark forest", 
                   audioPrompt: "Spooky wind",
                   duration: 5.0),
-            StoryScene(id: UUID(), 
+            StoryScene(id: "scene_2", 
                   sceneNumber: 2, 
                   narration: "There was a scary monster!", 
                   voice: "ElevenLabs Adam", 
                   visualPrompt: "A close-up of a monster's face", 
                   audioPrompt: "Monster roar",
                   duration: 7.0),
-            StoryScene(id: UUID(), 
+            StoryScene(id: "scene_3", 
                   sceneNumber: 3, 
                   narration: "The end.", 
                   voice: "ElevenLabs Adam", 
@@ -122,7 +122,7 @@ class StoryService: ObservableObject {
         let userStoriesCollection = db.collection("users").document(story.userId).collection("stories")
 
         do {
-            try userStoriesCollection.document(story.id.uuidString).setData(from: story) { error in
+            try userStoriesCollection.document(story.id).setData(from: story) { error in
                 if let error = error {
                     Log.error(Log.firebase, error, "Failed to save story to Firestore")
                     completion(.failure(.firestoreError(error)))
