@@ -112,6 +112,7 @@ class StoryService: ObservableObject {
         return Story(id: storyId, 
                     title: "Story: \(prompt.prefix(30))...", 
                     template: prompt, 
+                    backgroundMusicPrompt: "Atmospheric orchestral music with a mysterious undertone, building tension throughout the story",
                     scenes: scenes, 
                     createdAt: Date(), 
                     userId: userId)

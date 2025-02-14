@@ -129,6 +129,20 @@ struct StoryView: View {
                 .font(.headline)
                 .foregroundColor(.white.opacity(0.8))
             
+            if let backgroundMusic = story.backgroundMusicPrompt {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Background Music")
+                        .font(.headline)
+                        .foregroundColor(.white)
+                    
+                    Text(backgroundMusic)
+                        .foregroundColor(.white.opacity(0.9))
+                }
+                .padding()
+                .background(Color.white.opacity(0.1))
+                .cornerRadius(8)
+            }
+            
             ForEach(story.scenes) { scene in
                 SceneView(scene: scene)
                     .padding(.bottom, 10)

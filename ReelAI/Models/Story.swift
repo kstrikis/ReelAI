@@ -5,6 +5,7 @@ struct Story: Codable, Identifiable {
     let id: UUID  // Unique identifier for the story
     let title: String // Title of the story
     let template: String // The template used (e.g., "scary story", "evil sorcerer")
+    let backgroundMusicPrompt: String? // Story-wide background music prompt
     let scenes: [StoryScene] // Array of scenes composing the story
     let createdAt: Date // Timestamp for when the story was created
     let userId: String // ID of the user who created the story
