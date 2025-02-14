@@ -10,6 +10,7 @@ struct StoryMakerView: View {
     @State private var showingHistory: Bool = false
     @State private var errorMessage: String?
     @State private var showingError: Bool = false
+    @FocusState private var isPromptFocused: Bool
     
     var body: some View {
         ScrollView {
@@ -29,6 +30,7 @@ struct StoryMakerView: View {
                             RoundedRectangle(cornerRadius: 8)
                                 .stroke(Color.white.opacity(0.2), lineWidth: 1)
                         )
+                        .focused($isPromptFocused)
                     
                     Button(action: generateStory) {
                         HStack {
@@ -74,6 +76,11 @@ struct StoryMakerView: View {
         }
         .onAppear {
             loadUserStories()
+        }
+        // Add tap gesture to dismiss keyboard
+        .contentShape(Rectangle())  // Make the entire view tappable
+        .onTapGesture {
+            isPromptFocused = false  // Dismiss keyboard
         }
     }
     
