@@ -110,10 +110,15 @@ class AudioService: ObservableObject {
     // MARK: - Firestore Operations
     
     private func saveAudioToFirestore(_ audio: Audio, completion: @escaping (Result<Void, AudioServiceError>) -> Void) {
-        let userAudioCollection = db.collection("users").document(audio.userId).collection("audio")
+        // Use the same path structure as defined in Audio.computeStoragePath
+        let audioCollection = db.collection("users")
+            .document(audio.userId)
+            .collection("stories")
+            .document(audio.storyId)
+            .collection("audio")
         
         do {
-            try userAudioCollection.document(audio.id).setData(from: audio) { error in
+            try audioCollection.document(audio.id).setData(from: audio) { error in
                 if let error = error {
                     Log.error(Log.firebase, error, "Failed to save audio to Firestore")
                     completion(.failure(.firestoreError(error)))
@@ -131,8 +136,12 @@ class AudioService: ObservableObject {
     func loadAudio(for userId: String, storyId: String) {
         Log.p(Log.audio_music, Log.read, "Loading audio for story: \(storyId)")
         
-        db.collection("users").document(userId).collection("audio")
-            .whereField("storyId", isEqualTo: storyId)
+        // Update the query path to match the new structure
+        db.collection("users")
+            .document(userId)
+            .collection("stories")
+            .document(storyId)
+            .collection("audio")
             .order(by: "createdAt", descending: true)
             .snapshotPublisher()
             .map { snapshot -> [Audio] in
