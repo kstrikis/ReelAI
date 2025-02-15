@@ -50,6 +50,28 @@ struct DebugMenuView: View {
                 }) {
                     Label("Vertical Feed Test", systemImage: "arrow.up.and.down.text.horizontal")
                 }
+                
+                Button(action: { viewModel.auditAndFixRandomValues() }) {
+                    HStack {
+                        Label("Audit/Fix Random Values", systemImage: "number.square")
+                        Spacer()
+                        if viewModel.isFixingRandoms {
+                            ProgressView()
+                        }
+                    }
+                }
+                .disabled(viewModel.isFixingRandoms)
+                
+                if !viewModel.randomFixResults.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(viewModel.randomFixResults, id: \.self) { result in
+                            Text(result)
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
             }
             
             // Add more debug sections here as needed
@@ -186,6 +208,8 @@ class DebugViewModel: ObservableObject {
     @Published var auditStats: AuditStats = AuditStats()
     @Published var isSeeding = false
     @Published var seedingResults: [String] = []
+    @Published var isFixingRandoms = false
+    @Published var randomFixResults: [String] = []
     
     private let db = Firestore.firestore()
     private let storage = Storage.storage()
@@ -605,6 +629,85 @@ class DebugViewModel: ObservableObject {
     @MainActor
     private func addSeedingResult(_ result: String) {
         seedingResults.append(result)
+    }
+    
+    func auditAndFixRandomValues() {
+        Log.p(Log.debug, Log.analyze, "Starting random value audit")
+        isFixingRandoms = true
+        randomFixResults.removeAll()
+        
+        Task {
+            do {
+                await addRandomFixResult("Starting random value audit...")
+                
+                // Get all videos ordered by creation date
+                let snapshot = try await db.collection("videos")
+                    .order(by: "createdAt", descending: false)
+                    .getDocuments()
+                
+                let totalVideos = snapshot.documents.count
+                await addRandomFixResult("Found \(totalVideos) videos")
+                
+                var videosWithoutRandom = 0
+                var videosFixed = 0
+                var currentHighestRandom = -1
+                
+                // First pass: find highest random value and count videos without random
+                for doc in snapshot.documents {
+                    if let random = doc.data()["random"] as? Int {
+                        currentHighestRandom = max(currentHighestRandom, random)
+                    } else {
+                        videosWithoutRandom += 1
+                    }
+                }
+                
+                await addRandomFixResult("Found \(videosWithoutRandom) videos without random values")
+                await addRandomFixResult("Current highest random value: \(currentHighestRandom)")
+                
+                // Second pass: fix videos without random values
+                if videosWithoutRandom > 0 {
+                    var nextRandom = currentHighestRandom + 1
+                    
+                    for doc in snapshot.documents {
+                        if doc.data()["random"] == nil {
+                            // Update the document with the next random value
+                            try await db.collection("videos").document(doc.documentID)
+                                .updateData(["random": nextRandom])
+                            
+                            videosFixed += 1
+                            await addRandomFixResult("Fixed video \(doc.documentID) with random value \(nextRandom)")
+                            nextRandom += 1
+                        }
+                    }
+                }
+                
+                await MainActor.run {
+                    addRandomFixResult("✅ Audit complete!")
+                    addRandomFixResult("Total videos: \(totalVideos)")
+                    addRandomFixResult("Videos fixed: \(videosFixed)")
+                    isFixingRandoms = false
+                }
+                
+                Log.p(Log.debug, Log.analyze, Log.success, """
+                    Random value audit completed:
+                    Total videos: \(totalVideos)
+                    Videos without random: \(videosWithoutRandom)
+                    Videos fixed: \(videosFixed)
+                    """)
+                
+            } catch {
+                Log.p(Log.debug, Log.analyze, Log.error, "Random value audit failed: \(error.localizedDescription)")
+                await MainActor.run {
+                    addRandomFixResult("❌ Error: \(error.localizedDescription)")
+                    isFixingRandoms = false
+                }
+            }
+        }
+    }
+    
+    @MainActor
+    private func addRandomFixResult(_ result: String) {
+        randomFixResults.append(result)
     }
 }
 

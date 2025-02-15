@@ -127,63 +127,6 @@ final class FirestoreService {
 
     // MARK: - Video Operations
 
-    func createVideo(title: String, description: String?, userId: String, username: String) -> AnyPublisher<String, Error> {
-        Log.p(Log.firebase, Log.save, "Creating new video document")
-        Log.p(Log.firebase, Log.event, "Video metadata:")
-        Log.p(Log.firebase, Log.event, "Title: \(title)")
-        Log.p(Log.firebase, Log.event, "User ID: \(userId)")
-
-        return Future<String, Error> { promise in
-            // Verify Firebase Auth state first
-            guard let currentUser = Auth.auth().currentUser,
-                  currentUser.uid == userId else {
-                let error = NSError(domain: "com.edgineer.ReelAI",
-                                  code: -1,
-                                  userInfo: [NSLocalizedDescriptionKey: "Authentication mismatch or missing"])
-                Log.p(Log.firebase, Log.save, Log.error, "Failed to create video - auth mismatch")
-                promise(.failure(error))
-                return
-            }
-
-            // Create a Task to handle the async operations
-            Task {
-                do {
-                    // Get the next random value
-                    let nextRandomValue = try await self.getHighestRandomIndex() + 1
-                    
-                    let video = Video(
-                        id: UUID().uuidString,  // Will be replaced by Firestore document ID
-                        ownerId: userId,
-                        username: username,
-                        title: title,
-                        description: description,
-                        createdAt: Date(),      // Will be replaced by server timestamp
-                        updatedAt: Date(),      // Will be replaced by server timestamp
-                        engagement: .empty
-                    )
-                    
-                    // Add the random field to the video data
-                    var videoData = video.asFirestoreData
-                    videoData["random"] = nextRandomValue
-                    
-                    Log.p(Log.firebase, Log.save, "Creating document in 'videos' collection with random value \(nextRandomValue)...")
-                    self.db.collection("videos").addDocument(data: videoData) { error in
-                        if let error = error {
-                            Log.p(Log.firebase, Log.save, Log.error, "Failed to create video document: \(error.localizedDescription)")
-                            promise(.failure(error))
-                        } else {
-                            Log.p(Log.firebase, Log.save, Log.success, "Created video document successfully")
-                            promise(.success("Video document created successfully"))
-                        }
-                    }
-                } catch {
-                    Log.p(Log.firebase, Log.save, Log.error, "Failed to create video: \(error.localizedDescription)")
-                    promise(.failure(error))
-                }
-            }
-        }.eraseToAnyPublisher()
-    }
-
     func getVideos(userId: String? = nil, limit: Int = 20) -> AnyPublisher<[Video], Error> {
         Log.p(Log.firebase, Log.read, "Fetching videos" + (userId != nil ? " for user \(userId!)" : ""))
 
@@ -506,9 +449,11 @@ final class FirestoreService {
         
         guard let document = snapshot.documents.first,
               let randomValue = document.data()["random"] as? Int else {
+                  Log.p(Log.firebase, Log.read, Log.warning, "No random value found in document")
             return -1 // Return -1 if no videos exist
         }
         
+        Log.p(Log.firebase, Log.read, Log.success, "Found highest random value: \(randomValue)")
         return randomValue
     }
     

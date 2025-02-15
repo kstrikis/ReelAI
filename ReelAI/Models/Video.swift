@@ -10,6 +10,29 @@ struct Video: Identifiable, Codable {
     let createdAt: Date
     let updatedAt: Date
     let engagement: Engagement
+    let random: Int?  // Random value for video ordering, optional for backward compatibility
+    
+    init(
+        id: String,
+        ownerId: String,
+        username: String,
+        title: String,
+        description: String?,
+        createdAt: Date,
+        updatedAt: Date,
+        engagement: Engagement,
+        random: Int? = nil  // Make random parameter optional with default value
+    ) {
+        self.id = id
+        self.ownerId = ownerId
+        self.username = username
+        self.title = title
+        self.description = description
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+        self.engagement = engagement
+        self.random = random
+    }
     
     // Add computed property for file path
     var filePath: String {
@@ -61,6 +84,7 @@ extension Video {
         self.description = data["description"] as? String
         self.createdAt = createdAt
         self.updatedAt = (data["updatedAt"] as? Timestamp)?.dateValue() ?? createdAt
+        self.random = data["random"] as? Int
         
         // Parse engagement data
         if let engagementData = data["engagement"] as? [String: Any] {
@@ -76,7 +100,7 @@ extension Video {
     }
     
     var asFirestoreData: [String: Any] {
-        return [
+        var data: [String: Any] = [
             "id": id,
             "ownerId": ownerId,
             "username": username,
@@ -91,6 +115,13 @@ extension Video {
                 "tags": engagement.tags
             ]
         ]
+        
+        // Include random if present
+        if let random = random {
+            data["random"] = random
+        }
+        
+        return data
     }
 }
 
