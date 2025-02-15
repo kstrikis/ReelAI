@@ -2,7 +2,7 @@ import Foundation
 import FirebaseFirestore
 import FirebaseFirestoreCombineSwift
 
-struct Audio: Identifiable, Codable {
+struct Audio: Identifiable, Codable, Hashable {
     let id: String
     let storyId: String
     let sceneId: String? // nil for background music
@@ -44,5 +44,15 @@ struct Audio: Identifiable, Codable {
             createdAt: Date(),
             status: .pending
         )
+    }
+    
+    // MARK: - Hashable Conformance
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: Audio, rhs: Audio) -> Bool {
+        lhs.id == rhs.id
     }
 } 
