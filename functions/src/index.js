@@ -8,6 +8,9 @@ import { JsonOutputFunctionsParser } from "langchain/output_parsers";
 import { RunnableSequence } from "@langchain/core/runnables";
 import { z } from "zod";
 import { HttpsError } from "firebase-functions/v2/https";
+import fetch from "node-fetch";
+import { Buffer } from "buffer";
+import { setTimeout as sleep } from "timers/promises";
 
 // Initialize Firebase Admin with emulator configuration
 const app = initializeApp({
@@ -303,6 +306,252 @@ export const generateStory = functions.https.onCall(async (request) => {
     };
   } catch (error) {
     console.error("Story generation error:", error);
+    throw new HttpsError(
+      "internal",
+      error instanceof Error ? error.message : "Unknown error occurred"
+    );
+  }
+});
+
+// Firebase Function to generate audio
+export const generateAudio = functions.https.onCall(async (request) => {
+  const functionStartTime = new Date().toISOString();
+  console.log(`[${functionStartTime}] Starting audio generation request:`, {
+    auth: request.auth?.uid,
+    data: request.data
+  });
+
+  const auth = request.auth;
+  if (!auth) {
+    console.error("Authentication missing");
+    throw new HttpsError(
+      "unauthenticated",
+      "Must be signed in to generate audio"
+    );
+  }
+
+  const { storyId, sceneId, type, prompt } = request.data;
+  console.log("Request parameters:", { storyId, sceneId, type, prompt });
+
+  if (!storyId || !type || !prompt) {
+    console.error("Missing required parameters:", { storyId, type, prompt });
+    throw new HttpsError(
+      "invalid-argument",
+      "Must provide storyId, type, and prompt"
+    );
+  }
+
+  try {
+    let response;
+    let result;
+
+    switch (type) {
+    case "backgroundMusic": {
+      console.log("Starting background music generation with AIMLAPI");
+        
+      const requestBody = {
+        model: "stable-audio",
+        prompt,
+        steps: 100,
+        seconds_total: 45
+      };
+      console.log("AIMLAPI request body:", requestBody);
+
+      response = await fetch("https://api.aimlapi.com/v2/generate/audio", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${process.env.AIMLAPI_API_KEY}`
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("AIMLAPI initial request failed:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText
+        });
+        throw new Error(`AIMLAPI error: ${errorText}`);
+      }
+
+      const musicData = await response.json();
+      console.log("AIMLAPI initial response:", musicData);
+        
+      const generationId = musicData.generation_id;
+      if (!generationId) {
+        console.error("No generation_id in AIMLAPI response:", musicData);
+        throw new Error("No generation_id received from AIMLAPI");
+      }
+
+      // Poll for the result
+      let attempts = 0;
+      const maxAttempts = 30; // 5 minutes with 10-second intervals
+        
+      console.log("Starting polling loop for generation_id:", generationId);
+        
+      while (attempts < maxAttempts) {
+        console.log(`Polling attempt ${attempts + 1}/${maxAttempts}`);
+          
+        const pollResponse = await fetch(`https://api.aimlapi.com/v2/generate/audio?generation_id=${generationId}`, {
+          headers: {
+            "Authorization": `Bearer ${process.env.AIMLAPI_API_KEY}`
+          }
+        });
+            
+        if (!pollResponse.ok) {
+          const errorText = await pollResponse.text();
+          console.error("AIMLAPI polling request failed:", {
+            status: pollResponse.status,
+            statusText: pollResponse.statusText,
+            error: errorText,
+            attempt: attempts + 1
+          });
+          throw new Error(`AIMLAPI polling error: ${errorText}`);
+        }
+
+        const pollData = await pollResponse.json();
+        console.log("Poll response:", {
+          status: pollData.status,
+          hasUrl: !!pollData.audio_file?.url,
+          attempt: attempts + 1
+        });
+
+        if (pollData.status === "completed" && pollData.audio_file?.url) {
+          result = {
+            audioUrl: pollData.audio_file.url,
+            type: "url"
+          };
+          console.log("Successfully received audio URL");
+          break;
+        } else if (pollData.error) {
+          console.error("AIMLAPI generation error in poll response:", pollData.error);
+          throw new Error(`AIMLAPI generation error: ${pollData.error}`);
+        }
+
+        await sleep(10000); // Wait 10 seconds
+        attempts++;
+      }
+
+      if (!result) {
+        console.error("Background music generation timed out after", attempts, "attempts");
+        throw new Error("Background music generation timed out");
+      }
+      break;
+    }
+
+    case "narration": {
+      console.log("Starting narration generation with ElevenLabs");
+      const BRIAN_VOICE_ID = "nPczCjzI2devNBz1zQrb";
+        
+      const requestBody = {
+        text: prompt,
+        model_id: "eleven_multilingual_v2",
+        output_format: "mp3_44100_128",
+        voice_settings: {
+          stability: 0.5,
+          similarity_boost: 0.75,
+          style: 0.5,
+          use_speaker_boost: true
+        }
+      };
+      console.log("ElevenLabs request body:", requestBody);
+
+      response = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${BRIAN_VOICE_ID}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "xi-api-key": process.env.ELEVENLABS_API_KEY
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("ElevenLabs narration request failed:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText
+        });
+        throw new Error(`ElevenLabs error: ${errorText}`);
+      }
+
+      const audioBuffer = await response.arrayBuffer();
+      console.log("Successfully received audio buffer for narration");
+      result = {
+        audioData: Buffer.from(audioBuffer).toString("base64"),
+        type: "buffer"
+      };
+      break;
+    }
+
+    case "soundEffect": {
+      console.log("Starting sound effect generation with ElevenLabs");
+        
+      const requestBody = {
+        text: prompt,
+        duration_seconds: Math.min(22, Math.max(0.5, 5)),
+        prompt_influence: 0.7
+      };
+      console.log("ElevenLabs sound effect request body:", requestBody);
+
+      response = await fetch("https://api.elevenlabs.io/v1/sound-generation", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "xi-api-key": process.env.ELEVENLABS_API_KEY
+        },
+        body: JSON.stringify(requestBody)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("ElevenLabs sound effect request failed:", {
+          status: response.status,
+          statusText: response.statusText,
+          error: errorText
+        });
+        throw new Error(`ElevenLabs error: ${errorText}`);
+      }
+
+      const sfxBuffer = await response.arrayBuffer();
+      console.log("Successfully received audio buffer for sound effect");
+      result = {
+        audioData: Buffer.from(sfxBuffer).toString("base64"),
+        type: "buffer"
+      };
+      break;
+    }
+
+    default:
+      console.error("Invalid audio type:", type);
+      throw new HttpsError("invalid-argument", "Invalid audio type");
+    }
+
+    const functionEndTime = new Date().toISOString();
+    console.log(`[${functionEndTime}] Audio generation completed successfully:`, {
+      type,
+      resultType: result.type,
+      hasUrl: !!result.audioUrl,
+      hasData: !!result.audioData
+    });
+
+    return {
+      success: true,
+      result
+    };
+
+  } catch (error) {
+    const errorTime = new Date().toISOString();
+    console.error(`[${errorTime}] Audio generation error:`, {
+      error: error.message,
+      stack: error.stack,
+      type,
+      storyId,
+      sceneId
+    });
+    
     throw new HttpsError(
       "internal",
       error instanceof Error ? error.message : "Unknown error occurred"
