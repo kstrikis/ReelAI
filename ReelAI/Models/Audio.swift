@@ -10,9 +10,75 @@ struct Audio: Identifiable, Codable, Hashable {
     let prompt: String
     let type: AudioType
     let voice: String? // Only for narration
-    let mediaUrl: String?
+    private let _displayName: String? // Backing storage for displayName
+    let aimlapiUrl: String? // URL from AIMLAPI
+    let mediaUrl: String? // Our Firebase Storage URL
+    let generationId: String? // AIMLAPI generation ID for background music
     let createdAt: Date
     let status: AudioStatus
+    
+    init(
+        id: String,
+        storyId: String,
+        sceneId: String?,
+        userId: String,
+        prompt: String,
+        type: AudioType,
+        voice: String?,
+        _displayName: String?,
+        aimlapiUrl: String?,
+        mediaUrl: String?,
+        generationId: String?,
+        createdAt: Date,
+        status: AudioStatus
+    ) {
+        self.id = id
+        self.storyId = storyId
+        self.sceneId = sceneId
+        self.userId = userId
+        self.prompt = prompt
+        self.type = type
+        self.voice = voice
+        self._displayName = _displayName
+        self.aimlapiUrl = aimlapiUrl
+        self.mediaUrl = mediaUrl
+        self.generationId = generationId
+        self.createdAt = createdAt
+        self.status = status
+    }
+    
+    // Computed property that provides a fallback if _displayName is nil
+    var displayName: String {
+        if let name = _displayName {
+            return name
+        }
+        
+        // Fallback display name based on type and scene
+        let dateFormatter = DateFormatter()
+        dateFormatter.dateStyle = .short
+        dateFormatter.timeStyle = .short
+        let timestamp = dateFormatter.string(from: createdAt)
+        
+        switch type {
+        case .backgroundMusic:
+            return "Background Music (\(timestamp))"
+        case .narration:
+            if let sceneId = sceneId {
+                return "Narration - Scene \(String(sceneId.suffix(1))) (\(timestamp))"
+            }
+            return "Narration (\(timestamp))"
+        case .soundEffect:
+            if let sceneId = sceneId {
+                return "Sound Effect - Scene \(String(sceneId.suffix(1))) (\(timestamp))"
+            }
+            return "Sound Effect (\(timestamp))"
+        }
+    }
+    
+    enum CodingKeys: String, CodingKey {
+        case id, storyId, sceneId, userId, prompt, type, voice, aimlapiUrl, mediaUrl, generationId, createdAt, status
+        case _displayName = "displayName"
+    }
     
     enum AudioType: String, Codable {
         case backgroundMusic
@@ -40,7 +106,10 @@ struct Audio: Identifiable, Codable, Hashable {
             prompt: "Spooky wind sounds in a dark forest",
             type: .soundEffect,
             voice: nil,
+            _displayName: nil,
+            aimlapiUrl: nil,
             mediaUrl: nil,
+            generationId: nil,
             createdAt: Date(),
             status: .pending
         )

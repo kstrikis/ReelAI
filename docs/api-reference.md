@@ -75,6 +75,13 @@ const main = async () => {
 
 main();
 
+Example response:
+
+{
+  id: 'e6dcf61f-d3e5-4062-95e8-8b8fd0031cad:stable-audio',
+  status: 'queued'
+}
+
 ~~~
 
 Fetch an audio (Stable Audio)
@@ -131,6 +138,10 @@ const main = async () => {
 };
 
 main()
+
+Example response:
+
+{"id":"e6dcf61f-d3e5-4062-95e8-8b8fd0031cad:stable-audio","status":"completed","audio_file":{"url":"https://cdn.aimlapi.com/octopus/files/43647c7ac09c4d24944cb20734cd21f5_tmp1f_g_mml.wav","content_type":"application/octet-stream","file_name":"tmp1f_g_mml.wav","file_size":7938078}}%
 
 ~~~
 

@@ -1,23 +1,16 @@
 import Foundation
 import FirebaseFirestore
 import FirebaseFirestoreCombineSwift
-import FirebaseStorage
 import Combine
 import FirebaseFunctions
 
 enum AudioServiceError: Error, LocalizedError {
-    case encodingError
-    case firestoreError(Error)
     case noUserLoggedIn
     case aiGenerationError(Error)
     case unexpectedError(Error)
     
     var errorDescription: String? {
         switch self {
-        case .encodingError:
-            return "Failed to encode audio data"
-        case .firestoreError(let error):
-            return "Firestore error: \(error.localizedDescription)"
         case .noUserLoggedIn:
             return "No user is currently logged in"
         case .aiGenerationError(let error):
@@ -32,7 +25,6 @@ class AudioService: ObservableObject {
     @Published var currentAudio: [Audio] = []
     private var cancellables = Set<AnyCancellable>()
     private let db = Firestore.firestore()
-    private let storage = Storage.storage()
     
     init() {
         Log.p(Log.audio_music, Log.start, "Initializing AudioService")
@@ -51,12 +43,10 @@ class AudioService: ObservableObject {
         
         // Get the appropriate prompt based on type and scene
         let prompt: String
-        let voice: String?
         
         switch type {
         case .backgroundMusic:
             prompt = story.backgroundMusicPrompt ?? "Gentle ambient background music"
-            voice = nil
         case .narration:
             guard let sceneId = sceneId,
                   let scene = story.scenes.first(where: { scene in scene.id == sceneId }) else {
@@ -64,7 +54,6 @@ class AudioService: ObservableObject {
                 return
             }
             prompt = scene.narration ?? ""
-            voice = scene.voice
         case .soundEffect:
             guard let sceneId = sceneId,
                   let scene = story.scenes.first(where: { scene in scene.id == sceneId }) else {
@@ -72,100 +61,34 @@ class AudioService: ObservableObject {
                 return
             }
             prompt = scene.audioPrompt ?? ""
-            voice = nil
         }
         
-        // Call Firebase function first to generate the audio
+        // Call Firebase function to generate the audio
         callGenerateAudioFunction(
             storyId: story.id,
             sceneId: sceneId,
             type: type,
             prompt: prompt
-        ) { [weak self] result in
+        ) { result in
             switch result {
             case .success(let generationResult):
-                // Now create the audio document with the generated content
-                let audioId = "audio_\(UUID().uuidString)"
+                // Create a local Audio object from the function result
                 let audio = Audio(
-                    id: audioId,
+                    id: generationResult.audioId,
                     storyId: story.id,
                     sceneId: sceneId,
                     userId: userId,
                     prompt: prompt,
                     type: type,
-                    voice: voice,
-                    mediaUrl: nil,  // Will be set after storage upload if needed
+                    voice: type == .narration ? "ElevenLabs Brian" : nil,
+                    _displayName: generationResult.displayName,
+                    aimlapiUrl: generationResult.aimlapiUrl,
+                    mediaUrl: generationResult.audioUrl,
+                    generationId: generationResult.generationId,
                     createdAt: Date(),
-                    status: .pending
+                    status: Audio.AudioStatus(rawValue: generationResult.status) ?? .pending
                 )
-                
-                if let audioData = generationResult.audioData {
-                    // For narration and sound effects, we need to upload to Storage first
-                    self?.uploadAudioBuffer(audioData, audio: audio) { uploadResult in
-                        switch uploadResult {
-                        case .success(let url):
-                            let completedAudio = Audio(
-                                id: audioId,
-                                storyId: story.id,
-                                sceneId: sceneId,
-                                userId: userId,
-                                prompt: prompt,
-                                type: type,
-                                voice: voice,
-                                mediaUrl: url,
-                                createdAt: Date(),
-                                status: .completed
-                            )
-                            
-                            // Save the completed audio to Firestore
-                            self?.saveAudioToFirestore(completedAudio) { saveResult in
-                                switch saveResult {
-                                case .success:
-                                    // Update local state
-                                    DispatchQueue.main.async {
-                                        self?.currentAudio.append(completedAudio)
-                                    }
-                                    completion(.success(completedAudio))
-                                case .failure(let error):
-                                    completion(.failure(error))
-                                }
-                            }
-                            
-                        case .failure(let error):
-                            completion(.failure(error))
-                        }
-                    }
-                } else if let audioUrl = generationResult.audioUrl {
-                    // For background music, we can save directly
-                    let completedAudio = Audio(
-                        id: audioId,
-                        storyId: story.id,
-                        sceneId: sceneId,
-                        userId: userId,
-                        prompt: prompt,
-                        type: type,
-                        voice: voice,
-                        mediaUrl: audioUrl,
-                        createdAt: Date(),
-                        status: .completed
-                    )
-                    
-                    // Save the completed audio to Firestore
-                    self?.saveAudioToFirestore(completedAudio) { saveResult in
-                        switch saveResult {
-                        case .success:
-                            // Update local state
-                            DispatchQueue.main.async {
-                                self?.currentAudio.append(completedAudio)
-                            }
-                            completion(.success(completedAudio))
-                        case .failure(let error):
-                            completion(.failure(error))
-                        }
-                    }
-                } else {
-                    completion(.failure(.unexpectedError(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "No audio content in response"]))))
-                }
+                completion(.success(audio))
                 
             case .failure(let error):
                 completion(.failure(error))
@@ -182,7 +105,6 @@ class AudioService: ObservableObject {
     ) {
         Log.p(Log.audio_music, Log.generate, "Calling Firebase function to generate audio")
         
-        // Prepare the function data
         let data: [String: Any] = [
             "storyId": storyId,
             "sceneId": sceneId as Any,
@@ -190,7 +112,6 @@ class AudioService: ObservableObject {
             "prompt": prompt
         ]
         
-        // Call the Firebase function
         Functions.functions().httpsCallable("generateAudio").call(data) { result, error in
             if let error = error {
                 Log.error(Log.audio_music, error, "Firebase function error")
@@ -201,127 +122,91 @@ class AudioService: ObservableObject {
             guard let resultData = result?.data as? [String: Any],
                   let success = resultData["success"] as? Bool,
                   success,
-                  let result = resultData["result"] as? [String: Any] else {
+                  let result = resultData["result"] as? [String: Any],
+                  let id = result["id"] as? String else {
                 Log.p(Log.audio_music, Log.generate, Log.error, "Invalid response format")
                 completion(.failure(.unexpectedError(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]))))
                 return
             }
             
-            // Parse the result
+            // Create a local Audio object from the function result
             let generationResult = GenerationResult(
-                audioUrl: result["audioUrl"] as? String,
-                audioData: result["audioData"] as? String
+                audioId: id,
+                audioUrl: result["mediaUrl"] as? String,
+                displayName: result["displayName"] as? String,
+                aimlapiUrl: result["aimlapiUrl"] as? String,
+                generationId: result["generationId"] as? String,
+                status: result["status"] as? String ?? "pending"
             )
             
             completion(.success(generationResult))
         }
     }
     
-    // Helper struct to handle different response types
     private struct GenerationResult {
-        let audioUrl: String?      // For background music
-        let audioData: String?     // Base64 data for narration and sound effects
+        let audioId: String
+        let audioUrl: String?
+        let displayName: String?
+        let aimlapiUrl: String?
+        let generationId: String?
+        let status: String
     }
     
-    private func uploadAudioBuffer(_ base64Data: String, audio: Audio, completion: @escaping (Result<String, AudioServiceError>) -> Void) {
-        guard let data = Data(base64Encoded: base64Data) else {
-            completion(.failure(.encodingError))
-            return
-        }
+    struct RecheckResponse {
+        let checkedCount: Int
+        let updatedCount: Int
+        let message: String
+    }
+    
+    // MARK: - Audio Recheck
+    
+    func recheckAudio(
+        for storyId: String,
+        completion: @escaping (Result<RecheckResponse, AudioServiceError>) -> Void
+    ) {
+        Log.p(Log.audio_music, Log.verify, "Rechecking audio for story: \(storyId)")
         
-        // Create a reference to the audio file in Firebase Storage
-        let storagePath = Audio.computeStoragePath(userId: audio.userId, storyId: audio.storyId, audioId: audio.id)
-        let storageRef = storage.reference().child(storagePath)
+        let data: [String: Any] = [
+            "storyId": storyId
+        ]
         
-        // Upload the data
-        let metadata = StorageMetadata()
-        storageRef.putData(data, metadata: metadata) { metadata, error in
+        Functions.functions().httpsCallable("recheckAudio").call(data) { result, error in
             if let error = error {
-                Log.error(Log.audio_music, error, "Failed to upload audio buffer")
-                completion(.failure(.unexpectedError(error)))
+                Log.error(Log.audio_music, error, "Firebase function error")
+                completion(.failure(.aiGenerationError(error)))
                 return
             }
             
-            // Get the download URL
-            storageRef.downloadURL { url, error in
-                if let error = error {
-                    Log.error(Log.audio_music, error, "Failed to get download URL")
-                    completion(.failure(.unexpectedError(error)))
-                    return
-                }
-                
-                if let downloadUrl = url?.absoluteString {
-                    Log.p(Log.audio_music, Log.uploadAction, Log.success, "Audio buffer uploaded successfully")
-                    completion(.success(downloadUrl))
-                } else {
-                    completion(.failure(.unexpectedError(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "No download URL available"]))))
-                }
+            guard let resultData = result?.data as? [String: Any],
+                  let success = resultData["success"] as? Bool,
+                  success,
+                  let result = resultData["result"] as? [String: Any],
+                  let checkedCount = result["checkedCount"] as? Int,
+                  let updatedCount = result["updatedCount"] as? Int,
+                  let message = result["message"] as? String else {
+                Log.p(Log.audio_music, Log.verify, Log.error, "Invalid response format")
+                completion(.failure(.unexpectedError(NSError(domain: "", code: -1, userInfo: [NSLocalizedDescriptionKey: "Invalid response format"]))))
+                return
             }
+            
+            let response = RecheckResponse(
+                checkedCount: checkedCount,
+                updatedCount: updatedCount,
+                message: message
+            )
+            
+            completion(.success(response))
         }
     }
     
-    private func updateAudioInFirestore(_ audio: Audio, completion: @escaping (Result<Void, AudioServiceError>) -> Void) {
-        let audioRef = db.collection("users")
-            .document(audio.userId)
-            .collection("stories")
-            .document(audio.storyId)
-            .collection("audio")
-            .document(audio.id)
-        
-        do {
-            try audioRef.setData(from: audio) { error in
-                if let error = error {
-                    Log.error(Log.firebase, error, "Failed to update audio in Firestore")
-                    completion(.failure(.firestoreError(error)))
-                    return
-                }
-                
-                // Update local state
-                DispatchQueue.main.async { [weak self] in
-                    if let index = self?.currentAudio.firstIndex(where: { $0.id == audio.id }) {
-                        self?.currentAudio[index] = audio
-                    }
-                }
-                
-                Log.p(Log.firebase, Log.update, Log.success, "Audio updated in Firestore: \(audio.id)")
-                completion(.success(()))
-            }
-        } catch {
-            Log.error(Log.firebase, error, "Failed to encode audio for Firestore update")
-            completion(.failure(.encodingError))
-        }
-    }
-    
-    // MARK: - Firestore Operations
-    
-    private func saveAudioToFirestore(_ audio: Audio, completion: @escaping (Result<Void, AudioServiceError>) -> Void) {
-        // Use the same path structure as defined in Audio.computeStoragePath
-        let audioCollection = db.collection("users")
-            .document(audio.userId)
-            .collection("stories")
-            .document(audio.storyId)
-            .collection("audio")
-        
-        do {
-            try audioCollection.document(audio.id).setData(from: audio) { error in
-                if let error = error {
-                    Log.error(Log.firebase, error, "Failed to save audio to Firestore")
-                    completion(.failure(.firestoreError(error)))
-                    return
-                }
-                Log.p(Log.firebase, Log.save, Log.success, "Audio saved to Firestore: \(audio.id)")
-                completion(.success(()))
-            }
-        } catch {
-            Log.error(Log.firebase, error, "Failed to encode audio for Firestore")
-            completion(.failure(.encodingError))
-        }
-    }
+    // MARK: - Firestore Listening
     
     func loadAudio(for userId: String, storyId: String) {
-        Log.p(Log.audio_music, Log.read, "Loading audio for story: \(storyId)")
+        Log.p(Log.audio_music, Log.read, "Loading audio for story: \(storyId), user: \(userId)")
         
-        // Update the query path to match the new structure
+        let path = "users/\(userId)/stories/\(storyId)/audio"
+        Log.p(Log.audio_music, Log.read, "Querying Firestore path: \(path)")
+        
         db.collection("users")
             .document(userId)
             .collection("stories")
@@ -330,29 +215,31 @@ class AudioService: ObservableObject {
             .order(by: "createdAt", descending: true)
             .snapshotPublisher()
             .map { snapshot -> [Audio] in
-                snapshot.documents.compactMap { document in
-                    try? document.data(as: Audio.self)
+                Log.p(Log.audio_music, Log.read, "Received Firestore snapshot with \(snapshot.documents.count) documents")
+                
+                let audios = snapshot.documents.compactMap { document -> Audio? in
+                    do {
+                        let audio = try document.data(as: Audio.self)
+                        Log.p(Log.audio_music, Log.read, Log.success, "Successfully decoded audio: \(audio.id), type: \(audio.type.rawValue)")
+                        return audio
+                    } catch {
+                        Log.error(Log.audio_music, error, "Failed to decode audio document: \(document.documentID)")
+                        return nil
+                    }
                 }
+                
+                Log.p(Log.audio_music, Log.read, "Successfully decoded \(audios.count) audio items")
+                return audios
             }
             .receive(on: DispatchQueue.main)
             .sink { completion in
                 if case let .failure(error) = completion {
                     Log.error(Log.audio_music, error, "Failed to load audio")
                 }
-            } receiveValue: { [weak self] audio in
-                self?.currentAudio = audio
-                Log.p(Log.audio_music, Log.read, Log.success, "Loaded \(audio.count) audio items")
+            } receiveValue: { [weak self] audios in
+                self?.currentAudio = audios
+                Log.p(Log.audio_music, Log.read, Log.success, "Updated currentAudio with \(audios.count) items")
             }
             .store(in: &cancellables)
-    }
-    
-    // MARK: - Mock Generation
-    
-    private func mockGenerateAudio(type: Audio.AudioType, completion: @escaping (URL?) -> Void) {
-        // Simulate API delay
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
-            // For now, return nil to simulate no audio file yet
-            completion(nil)
-        }
     }
 } 
