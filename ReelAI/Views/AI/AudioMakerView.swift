@@ -366,6 +366,15 @@ struct AudioGeneratorView: View {
                     }
                 }
             }
+
+            Button {
+                generateAudio(type: .backgroundMusic)
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+            .disabled(isGenerating)
         }
     }
     
@@ -682,31 +691,42 @@ struct SceneAudioView: View {
         selectedAudio: Audio,
         isPlaying: Bool
     ) -> some View {
-        Group {
-            if selectedAudio.status == .completed {
-                Button {
-                    if type == .narration {
-                        togglePlayback(audio: selectedAudio, isPlaying: &isPlayingNarration, player: &narrationPlayer)
-                    } else {
-                        togglePlayback(audio: selectedAudio, isPlaying: &isPlayingSoundEffect, player: &soundEffectPlayer)
+        HStack {
+            Group {
+                if selectedAudio.status == .completed {
+                    Button {
+                        if type == .narration {
+                            togglePlayback(audio: selectedAudio, isPlaying: &isPlayingNarration, player: &narrationPlayer)
+                        } else {
+                            togglePlayback(audio: selectedAudio, isPlaying: &isPlayingSoundEffect, player: &soundEffectPlayer)
+                        }
+                    } label: {
+                        Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.white)
                     }
-                } label: {
-                    Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
-                        .font(.title2)
-                        .foregroundColor(.white)
-                }
-            } else {
-                switch selectedAudio.status {
-                case .generating, .pending:
-                    ProgressView()
-                        .tint(.white)
-                case .failed:
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundColor(.red)
-                default:
-                    EmptyView()
+                } else {
+                    switch selectedAudio.status {
+                    case .generating, .pending:
+                        ProgressView()
+                            .tint(.white)
+                    case .failed:
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundColor(.red)
+                    default:
+                        EmptyView()
+                    }
                 }
             }
+
+            Button {
+                generateAudio(type: type)
+            } label: {
+                Image(systemName: "plus.circle.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+            }
+            .disabled(isGenerating)
         }
     }
 
