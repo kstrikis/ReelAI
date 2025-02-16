@@ -135,6 +135,24 @@ private struct SceneListView: View {
     }
     
     private func generateClip(for scene: StoryScene, duration: Double) async {
+        Log.p(Log.video, Log.start, "Generating clip with parameters:", [
+            "storyId": story.id,
+            "sceneId": scene.id,
+            "promptLength": scene.visualPrompt.count,
+            "duration": duration
+        ])
+        
+        // Validate parameters
+        guard !scene.visualPrompt.isEmpty else {
+            Log.p(Log.video, Log.event, Log.error, "Cannot generate clip: Visual prompt is empty")
+            return
+        }
+        
+        guard duration >= 1 && duration <= 10 else {
+            Log.p(Log.video, Log.event, Log.error, "Cannot generate clip: Duration must be between 1 and 10 seconds")
+            return
+        }
+        
         do {
             try await videoService.generateClip(
                 storyId: story.id,
