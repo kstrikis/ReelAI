@@ -402,7 +402,7 @@ extension Log {
 // Example of how to extend with new contexts:
 extension Log {
     enum AIContext: Log.Context {
-        case training, inference, pipeline, story, voice, visual
+        case training, inference, pipeline, story, voice, visual, audio
         
         var emoji: String {
             switch self {
@@ -412,6 +412,7 @@ extension Log {
             case .story: return "📖"
             case .voice: return "🗣️"
             case .visual: return "👁️"
+            case .audio: return "🎵"
             }
         }
         
@@ -424,6 +425,7 @@ extension Log {
     static let ai_story = AIContext.story
     static let ai_voice = AIContext.voice
     static let ai_visual = AIContext.visual
+    static let ai_audio = AIContext.audio
     
     // Add AI-specific actions
     enum AIAction: Log.Action {

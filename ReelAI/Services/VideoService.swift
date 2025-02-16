@@ -24,6 +24,23 @@ final class VideoService {
         Log.p(Log.video, Log.exit, "VideoService initialization complete")
     }
 
+    /// Gets the highest random index currently in use
+    private func getHighestRandomIndex() async throws -> Int {
+        let snapshot = try await db.collection("videos")
+            .order(by: "random", descending: true)
+            .limit(to: 1)
+            .getDocuments()
+        
+        guard let document = snapshot.documents.first,
+              let randomValue = document.data()["random"] as? Int else {
+                  Log.p(Log.firebase, Log.read, Log.warning, "No random value found in document")
+            return -1 // Return -1 if no videos exist
+        }
+        
+        Log.p(Log.firebase, Log.read, Log.success, "Found highest random value: \(randomValue)")
+        return randomValue
+    }
+
     func createVideo(
         userId: String,
         username: String,
@@ -38,6 +55,10 @@ final class VideoService {
                     let docRef = self.db.collection("videos").document()
                     let videoId = docRef.documentID
                     
+                    // Get the next random value
+                    let nextRandomValue = try await self.getHighestRandomIndex() + 1
+                    Log.p(Log.video, Log.save, "Got next random value: \(nextRandomValue)")
+                    
                     let video = Video(
                         id: videoId,
                         ownerId: userId,
@@ -46,7 +67,8 @@ final class VideoService {
                         description: description,
                         createdAt: Date(),
                         updatedAt: Date(),
-                        engagement: .empty
+                        engagement: .empty,
+                        random: nextRandomValue  // Add the random value here
                     )
                     
                     // Use proper async/await with error handling
@@ -54,7 +76,7 @@ final class VideoService {
                         let encoder = Firestore.Encoder()
                         let data = try encoder.encode(video)
                         try await docRef.setData(data)
-                        Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId)")
+                        Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId) and random value: \(nextRandomValue)")
                         promise(.success((video, videoId)))
                     } catch {
                         throw error
@@ -104,6 +126,10 @@ final class VideoService {
                 let docRef = self.db.collection("videos").document()
                 let videoId = docRef.documentID
                 
+                // Get the next random value
+                let nextRandomValue = try await self.getHighestRandomIndex() + 1
+                Log.p(Log.video, Log.save, "Got next random value: \(nextRandomValue)")
+                
                 let video = Video(
                     id: videoId,
                     ownerId: userId,
@@ -112,11 +138,12 @@ final class VideoService {
                     description: description,
                     createdAt: Date(),
                     updatedAt: Date(),
-                    engagement: .empty
+                    engagement: .empty,
+                    random: nextRandomValue  // Add the random value here
                 )
                 
                 try await docRef.setData(from: video)
-                Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId)")
+                Log.p(Log.firebase, Log.save, Log.success, "Video document created with ID: \(videoId) and random value: \(nextRandomValue)")
                 
                 Log.p(Log.video, Log.uploadAction, "Starting video file upload")
                 let uploadPublisher = self.uploadService.uploadVideo(

@@ -142,7 +142,7 @@ class VerticalVideoHandler: ObservableObject {
         let preparationKey = "preparing_\(video.id)"
         let now = Date.now.timeIntervalSince1970
         let lastAttempt = UserDefaults.standard.double(forKey: preparationKey)
-        if lastAttempt > 0 && now - lastAttempt < 10.0 {
+        if lastAttempt > 0 && (now - lastAttempt) < 3.0 {
             Log.p(Log.video, Log.event, "Recent preparation attempt for video: \(video.id), skipping")
             return
         }
@@ -155,7 +155,7 @@ class VerticalVideoHandler: ObservableObject {
             if let cachedURL = urlCache[video.id] {
                 url = cachedURL
             } else {
-                let fetchedURL = try await withTimeout(seconds: 4) { () async throws -> URL? in
+                let fetchedURL = try await withTimeout(seconds: 2) { () async throws -> URL? in
                     try await FirestoreService.shared.getDownloadURL(for: video)
                 }
                 
@@ -177,7 +177,7 @@ class VerticalVideoHandler: ObservableObject {
             ])
             
             // Load essential properties with timeout
-            try await withTimeout(seconds: 5) {
+            try await withTimeout(seconds: 2) {
                 async let tracks = asset.load(.tracks)
                 async let duration = asset.load(.duration)
                 _ = try await (tracks, duration)
@@ -291,23 +291,55 @@ class VerticalVideoHandler: ObservableObject {
     }
 
     // Remove the non-async version since it can't effectively handle async operations
-    func getPlayerAsync(for video: Video) async -> AVPlayer? {
-        // Check actor's cache
-        if let player = await playerManager.getPlayer(for: video.id) {
-            Log.p(Log.video, Log.event, "Found player in actor cache for video: \(video.id)")
-            return player
-        }
+    func getPlayerAsync(for video: Video, forceRecreate: Bool = false) async -> AVPlayer? {
+        let maxRetries = 3
+        var currentRetry = 0
+        
+        while currentRetry <= maxRetries {
+            // Check actor's cache unless we're forcing recreation
+            if !forceRecreate {
+                if let player = await playerManager.getPlayer(for: video.id) {
+                    // Verify the player is valid
+                    if player.currentItem != nil {
+                        Log.p(Log.video, Log.event, "Found valid player in actor cache for video: \(video.id)")
+                        return player
+                    } else {
+                        Log.p(Log.video, Log.event, "Found invalid player in cache (no item), removing and recreating for video: \(video.id)")
+                        await playerManager.removePlayer(for: video.id)
+                        playerItemObservations.removeValue(forKey: video.id)
+                    }
+                }
+            }
 
-        Log.p(Log.video, Log.event, "No existing player found, preparing new player for video: \(video.id)")
-        // If no player exists, prepare one
-        await preparePlayer(for: video)
+            Log.p(Log.video, Log.event, "No existing player found, preparing new player for video: \(video.id) (attempt \(currentRetry + 1)/\(maxRetries + 1))")
+            // If no player exists or we're recreating, prepare one
+            await preparePlayer(for: video)
 
-        // Get the prepared player
-        let player = await playerManager.getPlayer(for: video.id)
-        if player == nil {
-            Log.p(Log.video, Log.event, Log.error, "Failed to get player after preparation for video: \(video.id)")
+            // Get the prepared player
+            if let player = await playerManager.getPlayer(for: video.id) {
+                // Verify the new player is valid
+                if player.currentItem != nil {
+                    return player
+                } else {
+                    Log.p(Log.video, Log.event, Log.error, "Newly created player has no item for video: \(video.id)")
+                    await playerManager.removePlayer(for: video.id)
+                    playerItemObservations.removeValue(forKey: video.id)
+                }
+            }
+            
+            if currentRetry < maxRetries {
+                Log.p(Log.video, Log.event, Log.error, "Failed to get valid player for video: \(video.id), retrying...")
+                // Exponential backoff: 0.5s, 1s, 2s
+                let delay = Double(pow(2.0, Double(currentRetry))) * 0.25
+                try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+            } else {
+                Log.p(Log.video, Log.event, Log.error, "Failed to get valid player after all retries for video: \(video.id)")
+            }
+            
+            currentRetry += 1
         }
-        return player
+        
+        return nil
     }
 
     func setActive(_ active: Bool) {
@@ -512,6 +544,7 @@ struct VideoVerticalFeed: View {
                             ForEach(handler.videos.indices, id: \.self) { index in
                                 VideoVerticalPlayer(
                                     video: handler.videos[index],
+                                    index: index,
                                     size: fullScreenSize
                                 )
                                 .id(index)
@@ -599,10 +632,10 @@ struct VideoVerticalFeed: View {
 
 struct VideoVerticalPlayer: View {
     let video: Video
+    let index: Int
     @StateObject private var playerWrapper = PlayerWrapper()
     let size: CGSize
     @StateObject private var handler = VerticalVideoHandler.shared
-    @State private var hasAppeared = false // Added to track appearance
 
     // Helper class to wrap the AVPlayer and make it Observable
     class PlayerWrapper: ObservableObject {
@@ -622,29 +655,41 @@ struct VideoVerticalPlayer: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .layoutPriority(1)
                     .onAppear {
-                        if !hasAppeared { // Only log on first appearance
-                            if player.currentItem == nil {
-                                Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player exists but has no currentItem for video: \(video.id)")
-                            } else if player.status != .readyToPlay {
-                                Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player exists, item exists, but status is not readyToPlay for video: \(video.id), status: \(player.status)")
-                            } else {
-                                Log.p(Log.video, Log.event, "🟢 Player is ready on appearance for video: \(video.id)")
+                        if player.currentItem == nil {
+                            Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player exists but has no currentItem for video: [\(index)] \(video.id), recreating player...")
+                            // Reset the player wrapper to force recreation
+                            playerWrapper.player = nil
+                            // Trigger player recreation
+                            Task {
+                                if let newPlayer = await handler.getPlayerAsync(for: video, forceRecreate: true) {
+                                    playerWrapper.setPlayer(newPlayer)
+                                }
                             }
-                            hasAppeared = true // Set flag after first appearance
+                        } else if player.status != .readyToPlay {
+                            Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player exists, item exists, but status is not readyToPlay for video: [\(index)] \(video.id), status: \(player.status)")
+                        } else {
+                            Log.p(Log.video, Log.event, "🟢 Player is ready on appearance for video: [\(index)] \(video.id)")
                         }
                     }
             } else {
                 // Placeholder while video loads
-                Rectangle()
-                    .fill(Color.black)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .layoutPriority(1)
-                    .onAppear {
-                        if !hasAppeared { // Only log on first appearance
-                            Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player is nil for video: \(video.id)")
-                            hasAppeared = true // Set flag after first appearance
-                        }
-                    }
+                ZStack {
+                    Rectangle()
+                        .fill(Color.black)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .layoutPriority(1)
+                    
+                    // Index and Video ID text
+                    Text("[\(index)] \(video.id)")
+                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding()
+                        .background(Color.black.opacity(0.7))
+                        .cornerRadius(8)
+                }
+                .onAppear {
+                    Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player is nil for video: [\(index)] \(video.id)")
+                }
             }
 
             // Overlay controls and UI elements

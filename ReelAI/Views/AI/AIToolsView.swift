@@ -2,6 +2,7 @@ import SwiftUI
 
 struct AIToolsView: View {
     @EnvironmentObject private var authService: AuthenticationService
+    @StateObject private var storyService = StoryService()
     @State private var selectedTool: AITool?
     
     enum AITool: String, CaseIterable {
@@ -97,6 +98,9 @@ struct AIToolsView: View {
         }
         .onAppear {
             Log.p(Log.app, Log.start, "AI Tools view appeared")
+            if let userId = authService.currentUser?.uid {
+                storyService.loadPreviousStories(for: userId)
+            }
         }
         .onDisappear {
             Log.p(Log.app, Log.exit, "AI Tools view disappeared")
@@ -108,6 +112,8 @@ struct AIToolsView: View {
         switch tool {
         case .storyMaker:
             StoryMakerView()
+        case .audioMaker:
+            AudioMakerView(stories: storyService.previousStories)
         case .publisher:
             PublishingView()
         default:
