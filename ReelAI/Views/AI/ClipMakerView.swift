@@ -135,12 +135,7 @@ private struct SceneListView: View {
     }
     
     private func generateClip(for scene: StoryScene, duration: Double) async {
-        Log.p(Log.video, Log.start, "Generating clip with parameters:", [
-            "storyId": story.id,
-            "sceneId": scene.id,
-            "promptLength": scene.visualPrompt.count,
-            "duration": duration
-        ])
+        Log.p(Log.video, Log.event, "Generating clip with parameters - storyId: \(story.id), sceneId: \(scene.id), promptLength: \(scene.visualPrompt.count), duration: \(duration)")
         
         // Validate parameters
         guard !scene.visualPrompt.isEmpty else {
