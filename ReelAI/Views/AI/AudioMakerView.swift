@@ -42,7 +42,8 @@ struct StoryAudioCard: View {
     @State private var isRechecking = false
     
     private var hasAllAudio: Bool {
-        let existingAudio = Set(audioService.currentAudio.map { "\($0.type)_\($0.sceneId ?? "background")" })
+        let completedAudio = audioService.currentAudio.filter { $0.status == .completed }
+        let existingAudio = Set(completedAudio.map { "\($0.type)_\($0.sceneId ?? "background")" })
         
         // Check background music
         if !existingAudio.contains("backgroundMusic_background") {
@@ -332,12 +333,15 @@ struct AudioGeneratorView: View {
                         .foregroundColor(audio.status == .completed ? .white : 
                                        audio.status == .failed ? .red : 
                                        .white.opacity(0.5))
+                        .font(.subheadline)
                 }
             }
             .pickerStyle(.menu)
             .tint(.white)
             .background(Color.white.opacity(0.2))
             .cornerRadius(8)
+            .scaleEffect(0.9)
+            .frame(height: 32)
             
             if let selectedBGM = selectedBGM,
                // Find the latest version of this audio from currentAudio
@@ -678,12 +682,15 @@ struct SceneAudioView: View {
                     .foregroundColor(audio.status == .completed ? .white : 
                                    audio.status == .failed ? .red : 
                                    .white.opacity(0.5))
+                    .font(.subheadline)
             }
         }
         .pickerStyle(.menu)
         .tint(.white)
         .background(Color.white.opacity(0.2))
         .cornerRadius(8)
+        .scaleEffect(0.9)
+        .frame(height: 32)
     }
     
     private func audioControlView(
