@@ -1311,4 +1311,573 @@ export const recheckAudio = functions.https.onCall(async (request) => {
       error instanceof Error ? error.message : "Unknown error occurred"
     );
   }
+});
+
+// Firebase Function to generate video clips
+export const generateVideo = functions.https.onCall(async (request) => {
+  const functionStartTime = new Date().toISOString();
+  console.log(`[${functionStartTime}] Starting video generation request:`, {
+    auth: request.auth?.uid,
+    data: request.data,
+    hasApiKey: !!process.env.AIMLAPI_API_KEY,
+    environment: process.env.NODE_ENV
+  });
+
+  const auth = request.auth;
+  if (!auth) {
+    console.error("Authentication missing");
+    throw new HttpsError(
+      "unauthenticated",
+      "Must be signed in to generate video"
+    );
+  }
+
+  const { storyId, sceneId, prompt, duration } = request.data;
+  console.log("Request parameters validation:", { 
+    hasStoryId: !!storyId,
+    hasSceneId: !!sceneId,
+    promptLength: prompt?.length,
+    duration: duration,
+    isValidDuration: duration >= 1 && duration <= 10
+  });
+
+  if (!storyId || !sceneId || !prompt) {
+    console.error("Missing required parameters:", { storyId, sceneId, prompt });
+    throw new HttpsError(
+      "invalid-argument",
+      "Must provide storyId, sceneId, and prompt"
+    );
+  }
+
+  try {
+    // Create initial video document
+    const videoId = `video_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const videoRef = db.collection("users")
+      .doc(auth.uid)
+      .collection("stories")
+      .doc(storyId)
+      .collection("videos")
+      .doc(videoId);
+
+    const dateFormatter = new Intl.DateTimeFormat("en-US", {
+      dateStyle: "short",
+      timeStyle: "short"
+    });
+    const timestamp = dateFormatter.format(new Date());
+
+    // Initial video document
+    await videoRef.set({
+      id: videoId,
+      storyId,
+      sceneId,
+      userId: auth.uid,
+      prompt,
+      displayName: `Scene ${sceneId} (${timestamp})`,
+      aimlapiUrl: null,
+      mediaUrl: null,
+      generationId: null,
+      createdAt: FieldValue.serverTimestamp(),
+      status: "generating"
+    });
+
+    // Make the initial API request
+    console.log("Starting video generation with AIMLAPI Kling");
+    
+    const requestBody = {
+      model: "kling-video/v1.6/standard/text-to-video",
+      prompt,
+      duration: duration <= 5 ? "5" : "10", // Round to duration
+      ratio: "9:16"
+    };
+    console.log("AIMLAPI request body:", requestBody);
+
+    const response = await fetch("https://api.aimlapi.com/v2/generate/video/kling/generation", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.AIMLAPI_API_KEY}`
+      },
+      body: JSON.stringify(requestBody)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error("AIMLAPI initial request failed:", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText
+      });
+      throw new Error(`AIMLAPI error: ${errorText}`);
+    }
+
+    const videoData = await response.json();
+    console.log("AIMLAPI initial response:", videoData);
+    
+    const generationId = videoData.id;
+    if (!generationId) {
+      console.error("No id in AIMLAPI response:", videoData);
+      throw new Error("No id received from AIMLAPI");
+    }
+
+    // Update document with generation ID
+    await videoRef.update({
+      generationId
+    });
+
+    // Start polling in the background
+    (async () => {
+      try {
+        let attempts = 0;
+        const maxAttempts = 60; // 10 minutes with 10-second intervals
+        
+        console.log("Starting polling loop for id:", generationId);
+        
+        while (attempts < maxAttempts) {
+          attempts++; // Single increment at the start of the loop
+          console.log(`Polling attempt ${attempts}/${maxAttempts}`);
+        
+          try {
+            const pollResponse = await fetch(`https://api.aimlapi.com/v2/generate/video/kling/generation?generation_id=${generationId}`, {
+              method: "GET",
+              headers: {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "Authorization": `Bearer ${process.env.AIMLAPI_API_KEY}`
+              }
+            });
+          
+            if (!pollResponse || !pollResponse.ok) {
+              const errorText = await pollResponse?.text() || "No response received";
+              console.error("AIMLAPI polling request failed:", {
+                status: pollResponse?.status,
+                statusText: pollResponse?.statusText,
+                error: errorText,
+                attempt: attempts
+              });
+              
+              // Mark video as failed if we get a 404 response
+              if (pollResponse?.status === 404) {
+                await videoRef.update({
+                  status: "failed",
+                  error: "Video generation not found: The generation may have expired or been deleted",
+                  updatedAt: FieldValue.serverTimestamp()
+                });
+                console.log("Marked video as failed due to 404 response:", videoId);
+              }
+              return;
+            }
+
+            const pollData = await pollResponse.json();
+            console.log("Full poll response for video generation:", {
+              generationId,
+              pollData,
+              status: pollData.status,
+              hasVideoUrl: !!pollData.video?.url,
+              videoMetadata: pollData.video || null,
+              error: pollData.error || null,
+              timestamp: new Date().toISOString()
+            });
+
+            if (pollData.status === "completed") {
+              console.log("Generation completed, getting video details...");
+              
+              // Get the video URL from the poll response
+              if (pollData.video?.url) {
+                const videoUrl = pollData.video.url;
+                console.log("Got video URL:", videoUrl);
+
+                // First update document with AIMLAPI URL and change status to pending
+                await videoRef.update({
+                  aimlapiUrl: videoUrl,
+                  status: "pending",
+                  updatedAt: FieldValue.serverTimestamp()
+                });
+                console.log("Updated document with AIMLAPI URL, status now pending");
+
+                try {
+                  // Download the video file
+                  console.log("Attempting to retrieve video from AIMLAPI URL:", videoUrl);
+                  const videoResponse = await fetch(videoUrl);
+                  if (!videoResponse.ok) {
+                    console.error("Failed to retrieve video from AIMLAPI:", {
+                      status: videoResponse.status,
+                      statusText: videoResponse.statusText
+                    });
+                    throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+                  }
+                  console.log("Successfully retrieved video from AIMLAPI");
+
+                  // Upload to Firebase Storage
+                  console.log("Starting upload to Firebase Storage");
+                  const storage = getStorage();
+                  const storagePath = `users/${auth.uid}/stories/${storyId}/videos/${videoId}.mp4`;
+                  console.log("Target storage path:", storagePath);
+                  
+                  const bucket = storage.bucket();
+                  const file = bucket.file(storagePath);
+
+                  // Create write stream and pipe the video data
+                  console.log("Creating write stream for Firebase Storage upload");
+                  const writeStream = file.createWriteStream({
+                    metadata: {
+                      contentType: "video/mp4"
+                    }
+                  });
+
+                  await new Promise((resolve, reject) => {
+                    videoResponse.body.pipe(writeStream)
+                      .on("finish", () => {
+                        console.log("Video data successfully written to Firebase Storage");
+                        resolve();
+                      })
+                      .on("error", (error) => {
+                        console.error("Error writing video data to Firebase Storage:", error);
+                        reject(error);
+                      });
+                  });
+
+                  // Make the file public
+                  console.log("Making Firebase Storage file public");
+                  await file.makePublic();
+                  const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+                  console.log("Generated public Firebase Storage URL:", firebaseUrl);
+
+                  // Update the document with both URLs
+                  console.log("Updating Firestore document with Firebase Storage URL and marking as completed");
+                  await videoRef.update({
+                    mediaUrl: firebaseUrl,
+                    status: "completed",
+                    updatedAt: FieldValue.serverTimestamp()
+                  });
+                  
+                  console.log("Video generation and storage completed successfully:", {
+                    videoId,
+                    aimlapiUrl: videoUrl,
+                    mediaUrl: firebaseUrl,
+                    status: "completed"
+                  });
+                } catch (storageError) {
+                  console.error("Error saving video to storage:", storageError);
+                  await videoRef.update({
+                    status: "failed",
+                    error: `Storage error: ${storageError.message}`,
+                    updatedAt: FieldValue.serverTimestamp()
+                  });
+                }
+              } else {
+                throw new Error("No video URL in response");
+              }
+            } else if (pollData.error || pollData.status === "failed") {
+              console.error("AIMLAPI generation failed:", pollData.error);
+              await videoRef.update({
+                status: "failed",
+                error: pollData.error || "Generation failed",
+                updatedAt: FieldValue.serverTimestamp()
+              });
+              break;
+            }
+
+            await sleep(10000); // Wait 510seconds between polls
+          } catch (pollError) {
+            console.error("Error in polling attempt:", pollError);
+            await sleep(10000); // Wait 10 seconds before retrying
+          }
+        }
+
+        if (attempts >= maxAttempts) {
+          console.error("Video generation timed out after", attempts, "attempts");
+          await videoRef.update({
+            status: "failed",
+            error: "Generation timed out",
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        }
+      } catch (error) {
+        console.error("Async video generation error:", error);
+        await videoRef.update({
+          status: "failed",
+          error: error.message,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+    })().catch(error => {
+      console.error("Top-level async error:", error);
+    });
+
+    // Return immediately with the video document info
+    return {
+      success: true,
+      result: {
+        id: videoId,
+        storyId,
+        sceneId,
+        userId: auth.uid,
+        prompt,
+        displayName: `Scene ${sceneId} (${timestamp})`,
+        aimlapiUrl: null,
+        mediaUrl: null,
+        generationId,
+        createdAt: new Date().toISOString(),
+        status: "pending"
+      }
+    };
+
+  } catch (error) {
+    const errorTime = new Date().toISOString();
+    console.error(`[${errorTime}] Video generation error:`, {
+      error: error.message,
+      stack: error.stack,
+      storyId,
+      sceneId
+    });
+    
+    throw new HttpsError(
+      "internal",
+      error instanceof Error ? error.message : "Unknown error occurred"
+    );
+  }
+});
+
+// Add the recheck video function
+export const recheckVideo = functions.https.onCall(async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "Must be signed in to recheck video"
+    );
+  }
+
+  const { storyId, videoId } = request.data;
+  if (!storyId || !videoId) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Must provide storyId and videoId"
+    );
+  }
+
+  try {
+    // Get the video document
+    const videoRef = db.collection("users")
+      .doc(auth.uid)
+      .collection("stories")
+      .doc(storyId)
+      .collection("videos")
+      .doc(videoId);
+
+    const videoDoc = await videoRef.get();
+    if (!videoDoc.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Video document not found"
+      );
+    }
+
+    const videoData = videoDoc.data();
+    if (videoData.userId !== auth.uid) {
+      throw new HttpsError(
+        "permission-denied",
+        "You don't have permission to modify this video"
+      );
+    }
+
+    // Case 1: Already has mediaUrl - just needs status update
+    if (videoData.mediaUrl) {
+      console.log("Found video with mediaUrl but not marked completed:", {
+        videoId,
+        mediaUrl: videoData.mediaUrl
+      });
+
+      // Update the document to completed
+      await videoRef.update({
+        status: "completed",
+        updatedAt: FieldValue.serverTimestamp()
+      });
+      
+      console.log("Updated video status to completed:", { videoId });
+      return {
+        success: true,
+        result: {
+          message: "Video marked as completed"
+        }
+      };
+    }
+
+    // Case 2: Has generationId but no aimlapiUrl - needs to check AIMLAPI status
+    if (videoData.generationId && !videoData.aimlapiUrl) {
+      try {
+        const pollResponse = await fetch(`https://api.aimlapi.com/v2/generate/video/kling/generation?generation_id=${videoData.generationId}`, {
+          method: "GET",
+          headers: {
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${process.env.AIMLAPI_API_KEY}`
+          }
+        });
+
+        if (!pollResponse || !pollResponse.ok) {
+          const errorText = await pollResponse?.text() || "No response received";
+          console.error("AIMLAPI recheck failed:", {
+            videoId,
+            status: pollResponse?.status,
+            error: errorText
+          });
+          
+          // Mark video as failed if we get a 404 response
+          if (pollResponse?.status === 404) {
+            await videoRef.update({
+              status: "failed",
+              error: "Video generation not found: The generation may have expired or been deleted",
+              updatedAt: FieldValue.serverTimestamp()
+            });
+            console.log("Marked video as failed due to 404 response:", videoId);
+          }
+          return;
+        }
+
+        const pollData = await pollResponse.json();
+        console.log("Full poll response for video recheck:", {
+          videoId,
+          pollData,
+          status: pollData.status,
+          hasVideoUrl: !!pollData.video?.url,
+          videoMetadata: pollData.video || null,
+          error: pollData.error || null,
+          timestamp: new Date().toISOString()
+        });
+        
+        if (pollData.status === "completed" && pollData.video?.url) {
+          const videoUrl = pollData.video.url;
+          console.log("Got video URL:", videoUrl);
+
+          try {
+            // Download the video file
+            const videoResponse = await fetch(videoUrl);
+            if (!videoResponse.ok) {
+              throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+            }
+
+            // Upload to Firebase Storage
+            const storage = getStorage();
+            const storagePath = `users/${auth.uid}/stories/${storyId}/videos/${videoId}.mp4`;
+            const bucket = storage.bucket();
+            const file = bucket.file(storagePath);
+
+            // Create write stream and pipe the video data
+            const writeStream = file.createWriteStream({
+              metadata: {
+                contentType: "video/mp4"
+              }
+            });
+
+            await new Promise((resolve, reject) => {
+              videoResponse.body.pipe(writeStream)
+                .on("finish", resolve)
+                .on("error", reject);
+            });
+
+            // Make the file public
+            await file.makePublic();
+            const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+
+            // Update the document with both URLs
+            await videoRef.update({
+              aimlapiUrl: videoUrl,
+              mediaUrl: firebaseUrl,
+              status: "completed",
+              updatedAt: FieldValue.serverTimestamp()
+            });
+            
+            console.log("Video recheck completed successfully:", {
+              videoId,
+              aimlapiUrl: videoUrl,
+              mediaUrl: firebaseUrl
+            });
+          } catch (storageError) {
+            console.error("Error saving video to storage:", storageError);
+            await videoRef.update({
+              status: "failed",
+              error: `Storage error: ${storageError.message}`,
+              updatedAt: FieldValue.serverTimestamp()
+            });
+          }
+        } else if (pollData.error || pollData.status === "failed") {
+          console.error("AIMLAPI generation failed:", pollData.error);
+          await videoRef.update({
+            status: "failed",
+            error: pollData.error || "Generation failed",
+            updatedAt: FieldValue.serverTimestamp()
+          });
+        }
+      } catch (error) {
+        console.error("Error rechecking AIMLAPI status:", error);
+      }
+    }
+    // Case 3: Has aimlapiUrl but no mediaUrl - needs to be uploaded to Firebase
+    else if (videoData.aimlapiUrl && !videoData.mediaUrl) {
+      try {
+        // Download the video file
+        const videoResponse = await fetch(videoData.aimlapiUrl);
+        if (!videoResponse.ok) {
+          throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+        }
+
+        // Upload to Firebase Storage
+        const storage = getStorage();
+        const storagePath = `users/${auth.uid}/stories/${storyId}/videos/${videoId}.mp4`;
+        const bucket = storage.bucket();
+        const file = bucket.file(storagePath);
+
+        // Create write stream and pipe the video data
+        const writeStream = file.createWriteStream({
+          metadata: {
+            contentType: "video/mp4"
+          }
+        });
+
+        await new Promise((resolve, reject) => {
+          videoResponse.body.pipe(writeStream)
+            .on("finish", resolve)
+            .on("error", reject);
+        });
+
+        // Make the file public
+        await file.makePublic();
+        const firebaseUrl = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+
+        // Update the document
+        await videoRef.update({
+          mediaUrl: firebaseUrl,
+          status: "completed",
+          updatedAt: FieldValue.serverTimestamp()
+        });
+        
+        console.log("Video upload completed successfully:", {
+          videoId,
+          mediaUrl: firebaseUrl
+        });
+      } catch (error) {
+        console.error("Error uploading video to Firebase:", error);
+        await videoRef.update({
+          status: "failed",
+          error: error.message,
+          updatedAt: FieldValue.serverTimestamp()
+        });
+      }
+    }
+
+    return {
+      success: true,
+      result: {
+        message: "Video recheck completed"
+      }
+    };
+
+  } catch (error) {
+    console.error("Video recheck error:", error);
+    throw new HttpsError(
+      "internal",
+      error instanceof Error ? error.message : "Unknown error occurred"
+    );
+  }
 }); 
