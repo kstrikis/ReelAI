@@ -114,6 +114,8 @@ struct AIToolsView: View {
             StoryMakerView()
         case .audioMaker:
             AudioMakerView(stories: storyService.previousStories)
+        case .clipMaker:
+            ClipMakerView(stories: storyService.previousStories)
         case .publisher:
             PublishingView()
         default:

@@ -375,3 +375,197 @@ curl -X POST https://api.elevenlabs.io/v1/sound-generation \
      -d '{
   "text": "Spacious braam suitable for high-impact movie trailer moments"
 }'
+
+~~~
+
+const main = async () => {
+  const response = await fetch('https://api.aimlapi.com/v2/generate/video/kling/generation', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer <YOUR_API_KEY>',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'kling-video/v1.6/standard/text-to-video',
+      prompt: 'A DJ on the stand is playing, around a World War II battlefield, lots of explosions, thousands of dancing soldiers, between tanks shooting, barbed wire fences, lots of smoke and fire, black and white old video: hyper realistic, photorealistic, photography, super detailed, very sharp, on a very white background',
+      ratio: '16:9',
+      duration: '5',
+    }),
+  }).then((res) => res.json());
+
+  console.log('Generation:', response);
+};
+
+main()
+
+Generate Text to Video
+Overview
+You can generate a video using the AI/ML API. In the basic setup, you need only a prompt.
+
+Please note that there is not just one, but several variations of this API described below, each with its own set of supported models and available parameters. You can explore these variations by selecting different options from the object dropdown menu and choose the one that suits you best.
+
+post
+/v2/generate/video/kling/generation
+
+Test it
+
+Authorizations
+Authorization
+string
+Bearer key
+
+Body
+any of
+
+Hide child attributes
+prompt
+string
+image_url
+string uri
+last_image_url
+string uri
+duration
+string
+seed
+integer
+model
+enum
+Options: runway-gen3/turbo/image-to-video
+ratio
+enum
+Options: 16:9, 9:16
+
+Hide child attributes
+prompt
+string
+duration
+string
+image_url
+string uri
+ratio
+enum
+Options: 16:9, 9:16, 1:1
+model
+enum
+Options: kling-video/v1/standard/image-to-video, kling-video/v1/pro/image-to-video, kling-video/v1.6/standard/image-to-video, kling-video/v1.6/pro/image-to-video
+
+Hide child attributes
+prompt
+string
+duration
+string
+ratio
+enum
+Options: 16:9, 9:16, 1:1
+model
+enum
+Options: kling-video/v1/standard/text-to-video, kling-video/v1/pro/text-to-video, kling-video/v1.6/standard/text-to-video
+Responses
+
+201
+cURL
+JavaScript
+Python
+HTTP
+Copy
+curl -L \
+  --request POST \
+  --url 'https://api.aimlapi.com/v2/generate/video/kling/generation' \
+  --header 'Authorization: Bearer JWT' \
+  --header 'Content-Type: application/json' \
+  --data '{"prompt":"text","image_url":"https://example.com","last_image_url":"https://example.com","duration":"5","model":"runway-gen3/turbo/image-to-video","ratio":"16:9"}'
+201
+No body
+
+Example
+Ensure you replace "my_key" with your actual API key before running the code.
+
+JavaScript
+Python
+Copy
+const main = async () => {
+  const response = await fetch('https://api.aimlapi.com/v2/generate/video/kling/generation', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer my_key',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'kling-video/v1/standard/text-to-video',
+      prompt: 'A DJ on the stand is playing, around a World War II battlefield, lots of explosions, thousands of dancing soldiers, between tanks shooting, barbed wire fences, lots of smoke and fire, black and white old video: hyper realistic, photorealistic, photography, super detailed, very sharp, on a very white background',
+      ratio: '16:9',
+      duration: '5',
+    }),
+  }).then((res) => res.json());
+
+  console.log('Generation:', response);
+};
+
+~~~
+
+Fetch Generation
+Overview
+After sending a request for video generation, this task is added to the queue. Based on the service's load, the generation can be completed in seconds or take a bit more. Here are the API to fetch the generations.
+
+get
+/v2/generate/video/kling/generation
+
+Test it
+
+Authorizations
+Authorization
+string
+Bearer key
+
+Query parameters
+Kling.v2.PollGenerationPayloadDTO
+object
+
+Hide child attributes
+generation_id
+string
+Responses
+
+200
+cURL
+JavaScript
+Python
+HTTP
+Copy
+curl -L \
+  --url 'https://api.aimlapi.com/v2/generate/video/kling/generation?Kling.v2.PollGenerationPayloadDTO=%5Bobject+Object%5D' \
+  --header 'Authorization: Bearer JWT'
+200
+No body
+
+Example
+Ensure you replace "my_key" with your actual API key before running the code.
+
+Fetch Single Generation
+You can send the following request:
+
+JavaScript
+Python
+Copy
+const main = async () => {
+  const params = new URLSearchParams({
+    generation_id: "<YOUR_GENERATION_ID>"
+  });
+  const response = await fetch(`https://api.aimlapi.com/v2/generate/video/kling/generation?${params.toString()}`, {
+    method: 'GET',
+    headers: {
+      Authorization: 'Bearer my_key',
+      'Content-Type': 'application/json',
+    },
+  }).then((res) => res.json());
+
+  console.log('Generation:', response);
+};
+
+main()
+
+Example response:
+
+{"id":"7eeae0a9-4ef3-49a4-b27a-f3b018c33a71:kling-video/v1.6/standard/text-to-video","status":"completed","video":{"url":"https://cdn.aimlapi.com/eagle/files/zebra/uNG7YKUZkLoTAw62Ge6db_output.mp4","content_type":"video/mp4","file_name":"output.mp4","file_size":4582447}}%
+
+~~~

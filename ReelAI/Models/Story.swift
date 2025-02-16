@@ -53,4 +53,57 @@ struct StoryScene: Codable, Identifiable, Hashable {
     static func == (lhs: StoryScene, rhs: StoryScene) -> Bool {
         lhs.id == rhs.id
     }
+}
+
+// MARK: - Preview Data
+extension Story {
+    static var previewStories: [Story] = [
+        Story(
+            id: "story1",
+            title: "Space Adventure",
+            template: "adventure",
+            backgroundMusicPrompt: "Epic orchestral music with a sense of wonder",
+            scenes: [
+                StoryScene(
+                    id: "scene1",
+                    sceneNumber: 1,
+                    narration: "Our journey begins in the vast expanse of space",
+                    voice: "ElevenLabs Brian",
+                    visualPrompt: "A stunning view of Earth from space, with stars twinkling in the background",
+                    audioPrompt: "Gentle whooshing of spacecraft engines",
+                    duration: 5
+                ),
+                StoryScene(
+                    id: "scene2",
+                    sceneNumber: 2,
+                    narration: "A mysterious signal catches our attention",
+                    voice: "ElevenLabs Brian",
+                    visualPrompt: "A glowing alien artifact floating in space, emitting pulses of blue light",
+                    audioPrompt: "Mysterious pulsing sounds with space ambience",
+                    duration: 5
+                )
+            ],
+            createdAt: Date(),
+            userId: "preview_user"
+        ),
+        Story(
+            id: "story2",
+            title: "Urban Legend",
+            template: "mystery",
+            backgroundMusicPrompt: "Dark ambient music with suspenseful undertones",
+            scenes: [
+                StoryScene(
+                    id: "scene3",
+                    sceneNumber: 1,
+                    narration: "In the heart of the city, a legend persists",
+                    voice: "ElevenLabs Rachel",
+                    visualPrompt: "A foggy city street at night, with vintage lampposts casting eerie shadows",
+                    audioPrompt: "City ambience with distant sirens",
+                    duration: 5
+                )
+            ],
+            createdAt: Date().addingTimeInterval(-86400), // 1 day ago
+            userId: "preview_user"
+        )
+    ]
 } 
