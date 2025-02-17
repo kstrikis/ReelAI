@@ -42,18 +42,43 @@ struct StoryAudioCard: View {
     @State private var isRechecking = false
     
     private var hasAllAudio: Bool {
-        let completedAudio = audioService.currentAudio.filter { $0.status == .completed }
-        let existingAudio = Set(completedAudio.map { "\($0.type)_\($0.sceneId ?? "background")" })
+        Log.p(Log.audio_music, Log.verify, "Checking hasAllAudio for story ID: \(story.id)")
+        Log.p(Log.audio_music, Log.verify, "Current audio array has \(audioService.currentAudio.count) items")
         
-        // Check background music
-        if !existingAudio.contains("backgroundMusic_background") {
+        let completedAudio = audioService.currentAudio.filter { $0.status == .completed && $0.storyId == story.id }
+        
+        // Debug print to understand the state
+        Log.p(Log.audio_music, Log.verify, "Story \(story.title) - Completed Audio Count: \(completedAudio.count), Total Audio Count: \(audioService.currentAudio.filter { $0.storyId == story.id }.count)")
+        Log.p(Log.audio_music, Log.verify, "ALL COMPLETED AUDIO FOR THIS STORY:")
+        for audio in completedAudio {
+            Log.p(Log.audio_music, Log.verify, "  - Type: \(audio.type), SceneId: \(audio.sceneId ?? "nil"), Status: \(audio.status)")
+        }
+        
+        // First check if we have background music
+        let hasBGM = completedAudio.contains(where: { $0.type == .backgroundMusic && $0.sceneId == nil })
+        Log.p(Log.audio_music, Log.verify, "Has Background Music: \(hasBGM)")
+        if !hasBGM {
+            Log.p(Log.audio_music, Log.verify, "Missing background music")
             return false
         }
         
-        // Check each scene's narration and sound effects
+        // Then check each scene's narration and sound effects
         for scene in story.scenes {
-            if !existingAudio.contains("narration_\(scene.id)") ||
-               !existingAudio.contains("soundEffect_\(scene.id)") {
+            Log.p(Log.audio_music, Log.verify, "Checking scene \(scene.sceneNumber) (ID: \(scene.id))")
+            
+            // Check narration
+            let hasNarration = completedAudio.contains(where: { $0.type == .narration && $0.sceneId == scene.id })
+            Log.p(Log.audio_music, Log.verify, "  Scene \(scene.sceneNumber) has narration: \(hasNarration)")
+            if !hasNarration {
+                Log.p(Log.audio_music, Log.verify, "Missing narration for scene \(scene.sceneNumber)")
+                return false
+            }
+            
+            // Check sound effect
+            let hasSoundEffect = completedAudio.contains(where: { $0.type == .soundEffect && $0.sceneId == scene.id })
+            Log.p(Log.audio_music, Log.verify, "  Scene \(scene.sceneNumber) has sound effect: \(hasSoundEffect)")
+            if !hasSoundEffect {
+                Log.p(Log.audio_music, Log.verify, "Missing sound effect for scene \(scene.sceneNumber)")
                 return false
             }
         }
@@ -134,15 +159,34 @@ struct StoryAudioCard: View {
     
     private func generateAllMissingAudio() {
         let userId = story.userId
-        
-        // Create a set of existing audio IDs for quick lookup
-        let existingAudio = Set(audioService.currentAudio.map { "\($0.type)_\($0.sceneId ?? "background")" })
-        
+        let completedAudio = audioService.currentAudio.filter { $0.status == .completed && $0.storyId == story.id }
         var generationsRemaining = 0
         
-        // Queue up background music if missing
-        if !existingAudio.contains("backgroundMusic_background") {
+        // Check background music
+        if !completedAudio.contains(where: { $0.type == .backgroundMusic && $0.sceneId == nil }) {
             generationsRemaining += 1
+        }
+        
+        // Check each scene
+        for scene in story.scenes {
+            if !completedAudio.contains(where: { $0.type == .narration && $0.sceneId == scene.id }) {
+                generationsRemaining += 1
+            }
+            if !completedAudio.contains(where: { $0.type == .soundEffect && $0.sceneId == scene.id }) {
+                generationsRemaining += 1
+            }
+        }
+        
+        // If nothing to generate, return early
+        if generationsRemaining == 0 {
+            return
+        }
+        
+        // Set generating state before starting any generations
+        isGenerating = true
+        
+        // Generate background music if needed
+        if !completedAudio.contains(where: { $0.type == .backgroundMusic && $0.sceneId == nil }) {
             audioService.generateAudio(
                 for: story,
                 type: .backgroundMusic,
@@ -152,10 +196,9 @@ struct StoryAudioCard: View {
             }
         }
         
-        // Queue up narration and sound effects for each scene
+        // Generate scene audio if needed
         for scene in story.scenes {
-            if !existingAudio.contains("narration_\(scene.id)") {
-                generationsRemaining += 1
+            if !completedAudio.contains(where: { $0.type == .narration && $0.sceneId == scene.id }) {
                 audioService.generateAudio(
                     for: story,
                     sceneId: scene.id,
@@ -165,8 +208,7 @@ struct StoryAudioCard: View {
                     handleGenerationComplete(result)
                 }
             }
-            if !existingAudio.contains("soundEffect_\(scene.id)") {
-                generationsRemaining += 1
+            if !completedAudio.contains(where: { $0.type == .soundEffect && $0.sceneId == scene.id }) {
                 audioService.generateAudio(
                     for: story,
                     sceneId: scene.id,
@@ -177,17 +219,14 @@ struct StoryAudioCard: View {
                 }
             }
         }
-        
-        if generationsRemaining == 0 {
-            isGenerating = false
-        }
     }
     
     private func handleGenerationComplete(_ result: Result<Audio, AudioServiceError>) {
         DispatchQueue.main.async {
             switch result {
             case .success:
-                break
+                // Reload audio after each successful generation
+                audioService.loadAudio(for: story.userId, storyId: story.id)
             case .failure(let error):
                 errorMessage = error.localizedDescription
                 showError = true
@@ -235,7 +274,7 @@ struct AudioGeneratorView: View {
     @State private var isRechecking = false
     
     private var backgroundMusicAudios: [Audio] {
-        audioService.currentAudio.filter { $0.type == .backgroundMusic }
+        audioService.currentAudio.filter { $0.type == .backgroundMusic && $0.storyId == story.id }
     }
     
     var body: some View {
