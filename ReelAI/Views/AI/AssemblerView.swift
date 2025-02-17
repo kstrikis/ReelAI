@@ -489,7 +489,6 @@ struct AssemblyCard: View {
     let assembly: Assembly
     @Binding var player: AVPlayer?
     @Binding var isPlayingPreview: Bool
-    @State private var showingPublisher = false
     @State private var isSaving = false
     @State private var showPhotoPermissionAlert = false
     @Environment(\.dismiss) private var dismiss
@@ -534,13 +533,6 @@ struct AssemblyCard: View {
                                 .foregroundColor(.green)
                         }
                         .disabled(isSaving)
-                        
-                        Button {
-                            showingPublisher = true
-                        } label: {
-                            Label("Send to Publisher", systemImage: "square.and.arrow.up")
-                                .foregroundColor(.blue)
-                        }
                     }
                 }
             }
@@ -549,14 +541,6 @@ struct AssemblyCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.gray.opacity(0.2))
         .cornerRadius(10)
-        .sheet(isPresented: $showingPublisher) {
-            if let url = assembly.mediaUrl,
-               let videoURL = URL(string: url) {
-                NavigationView {
-                    PublishingView(selectedVideo: videoURL)
-                }
-            }
-        }
         .alert("Photos Permission Required", isPresented: $showPhotoPermissionAlert) {
             Button("Open Settings", role: .none) {
                 if let settingsURL = URL(string: UIApplication.openSettingsURLString) {
@@ -597,58 +581,50 @@ struct AssemblyCard: View {
         isSaving = true
         
         do {
-            // Create a temporary file for the video
-            let tempDir = FileManager.default.temporaryDirectory
-            let tempURL = tempDir.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+            // Create a unique temporary file URL
+            let temporaryFileURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension("mp4")
+            
+            Log.p(Log.video, Log.event, "Downloading to temporary file: \(temporaryFileURL.path)")
             
             // Download the video
-            let (downloadURL, _) = try await URLSession.shared.download(from: url)
+            let (downloadedURL, response) = try await URLSession.shared.download(from: url)
             
-            // Convert video to compatible format using AVAsset
-            let asset = AVAsset(url: downloadURL)
-            
-            // Create export session
-            guard let exportSession = AVAssetExportSession(
-                asset: asset,
-                presetName: AVAssetExportPresetHighestQuality
-            ) else {
-                Log.p(Log.video, Log.event, Log.error, "Failed to create export session")
+            // Validate response
+            guard let httpResponse = response as? HTTPURLResponse,
+                  (200...299).contains(httpResponse.statusCode) else {
+                Log.p(Log.video, Log.event, Log.error, "Invalid response downloading video")
                 isSaving = false
                 return
             }
             
-            exportSession.outputURL = tempURL
-            exportSession.outputFileType = .mp4
+            // Move downloaded file to our temporary location
+            try FileManager.default.moveItem(at: downloadedURL, to: temporaryFileURL)
             
-            // Export the video
-            await exportSession.export()
+            // Log file details
+            let fileSize = try temporaryFileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            Log.p(Log.video, Log.event, "Downloaded video size: \(fileSize) bytes")
             
-            if exportSession.status == .completed {
-                // Read the converted video data
-                let videoData = try Data(contentsOf: tempURL)
-                
-                // Save to Photos
-                try await PHPhotoLibrary.shared().performChanges {
-                    let creationRequest = PHAssetCreationRequest.forAsset()
-                    creationRequest.addResource(with: .video, data: videoData, options: nil)
-                }
-                
-                Log.p(Log.video, Log.save, "Video saved to Photos")
-                
-                // Clean up temp file
-                try? FileManager.default.removeItem(at: tempURL)
-                try? FileManager.default.removeItem(at: downloadURL)
-                
-            } else if let error = exportSession.error {
-                Log.error(Log.video, error, "Failed to export video")
-                throw error
-            } else {
-                Log.p(Log.video, Log.event, Log.error, "Export failed with status: \(exportSession.status.rawValue)")
-                throw NSError(domain: "VideoExport", code: -1, userInfo: [NSLocalizedDescriptionKey: "Export failed"])
+            // Save to Photos
+            try await PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: temporaryFileURL)
             }
             
-        } catch {
-            Log.error(Log.video, error, "Failed to save video to Photos")
+            Log.p(Log.video, Log.save, "Video saved to Photos successfully")
+            
+            // Clean up
+            try? FileManager.default.removeItem(at: temporaryFileURL)
+            
+        } catch let error as NSError {
+            // Detailed error logging
+            Log.p(Log.video, Log.event, Log.error, """
+                Save failed:
+                - Domain: \(error.domain)
+                - Code: \(error.code)
+                - Description: \(error.localizedDescription)
+                - Underlying Error: \((error.userInfo[NSUnderlyingErrorKey] as? Error)?.localizedDescription ?? "None")
+                """)
         }
         
         isSaving = false
