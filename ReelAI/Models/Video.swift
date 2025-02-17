@@ -1,18 +1,18 @@
 import FirebaseFirestore
 import Foundation
 
-struct Video: Identifiable, Codable {
-    let id: String
-    let ownerId: String
-    let username: String
-    let title: String
-    let description: String?
-    let createdAt: Date
-    let updatedAt: Date
-    let engagement: Engagement
-    let random: Int?  // Random value for video ordering, optional for backward compatibility
+public struct Video: Identifiable, Codable {
+    public let id: String
+    public let ownerId: String
+    public let username: String
+    public let title: String
+    public let description: String?
+    public let createdAt: Date
+    public let updatedAt: Date
+    public let engagement: Engagement
+    public let random: Int?  // Random value for video ordering, optional for backward compatibility
     
-    init(
+    public init(
         id: String,
         ownerId: String,
         username: String,
@@ -35,30 +35,42 @@ struct Video: Identifiable, Codable {
     }
     
     // Add computed property for file path
-    var filePath: String {
+    public var filePath: String {
         return "videos/\(ownerId)/\(id).mp4"
     }
     
-    var computedMediaUrl: String {
+    public var computedMediaUrl: String {
         let bucket = "reelai-53f8b.firebasestorage.app"
         let path = "videos/\(ownerId)/\(id).mp4"
         let encodedPath = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         return "https://firebasestorage.googleapis.com/v0/b/\(bucket)/o/\(encodedPath)?alt=media"
     }
     
-    struct Engagement: Codable {
-        let viewCount: Int
-        let likeCount: Int
-        let dislikeCount: Int
-        let tags: [String: Int]  // tag name -> count of users who used this tag
+    public struct Engagement: Codable {
+        public let viewCount: Int
+        public let likeCount: Int
+        public let dislikeCount: Int
+        public let tags: [String: Int]  // tag name -> count of users who used this tag
         
-        static var empty: Engagement {
+        public static var empty: Engagement {
             Engagement(
                 viewCount: 0,
                 likeCount: 0,
                 dislikeCount: 0,
                 tags: [:]
             )
+        }
+        
+        public init(
+            viewCount: Int,
+            likeCount: Int,
+            dislikeCount: Int,
+            tags: [String: Int]
+        ) {
+            self.viewCount = viewCount
+            self.likeCount = likeCount
+            self.dislikeCount = dislikeCount
+            self.tags = tags
         }
     }
 }

@@ -630,12 +630,243 @@ struct VideoVerticalFeed: View {
     }
 }
 
+// Add VideoOverlay view model
+@MainActor
+public class VideoOverlayViewModel: ObservableObject {
+    @Published public var isLiked: Bool = false
+    @Published public var isDisliked: Bool = false
+    @Published private(set) var currentLikeCount: Int
+    @Published private(set) var currentDislikeCount: Int
+    private var cancellables = Set<AnyCancellable>()
+    
+    public init(video: Video) {
+        self.currentLikeCount = video.engagement.likeCount
+        self.currentDislikeCount = video.engagement.dislikeCount
+    }
+    
+    public func handleLike(for video: Video) {
+        if isLiked {
+            // Unlike
+            isLiked = false
+            currentLikeCount -= 1
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: true, increment: false)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        } else {
+            // Like
+            isLiked = true
+            currentLikeCount += 1
+            if isDisliked {
+                isDisliked = false
+                currentDislikeCount -= 1
+                // Remove dislike first
+                FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: false, increment: false)
+                    .sink(receiveCompletion: { _ in }, receiveValue: { })
+                    .store(in: &cancellables)
+            }
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: true, increment: true)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        }
+    }
+    
+    public func handleDislike(for video: Video) {
+        if isDisliked {
+            // Remove dislike
+            isDisliked = false
+            currentDislikeCount -= 1
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: false, increment: false)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        } else {
+            // Dislike
+            isDisliked = true
+            currentDislikeCount += 1
+            if isLiked {
+                isLiked = false
+                currentLikeCount -= 1
+                // Remove like first
+                FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: true, increment: false)
+                    .sink(receiveCompletion: { _ in }, receiveValue: { })
+                    .store(in: &cancellables)
+            }
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: false, increment: true)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        }
+    }
+}
+
+public struct VideoOverlay: View {
+    private let video: Video
+    private let player: AVPlayer
+    @Binding private var isVisible: Bool
+    @State private var hideTask: Task<Void, Never>?
+    @State private var isPlaying: Bool = true
+    @StateObject private var viewModel: VideoOverlayViewModel
+    
+    public init(video: Video, player: AVPlayer, isVisible: Binding<Bool>) {
+        self.video = video
+        self.player = player
+        self._isVisible = isVisible
+        self._viewModel = StateObject(wrappedValue: VideoOverlayViewModel(video: video))
+    }
+    
+    public var body: some View {
+        VStack {
+            // Add extra top padding
+            Color.clear.frame(height: 50)
+            
+            // Video info moved to top
+            VStack(alignment: .leading, spacing: 8) {
+                Text(video.title)
+                    .font(.title3)
+                    .bold()
+                    .foregroundColor(.white)
+                
+                if let description = video.description {
+                    Text(description)
+                        .font(.body)
+                        .foregroundColor(.white.opacity(0.9))
+                        .lineLimit(3)
+                }
+                
+                HStack {
+                    Text(video.username)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                    
+                    Spacer()
+                    
+                    // Engagement stats
+                    HStack(spacing: 16) {
+                        Label("\(video.engagement.viewCount)", systemImage: "eye.fill")
+                        Label("\(viewModel.currentLikeCount)", systemImage: "hand.thumbsup.fill")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding()
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [.black.opacity(0.7), .clear]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            
+            Spacer()
+        }
+        .overlay(alignment: .center) {
+            // Play/Pause button
+            Button(action: {
+                if isPlaying {
+                    player.pause()
+                } else {
+                    player.play()
+                }
+                isPlaying.toggle()
+                scheduleOverlayHide()
+            }) {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+        }
+        .overlay(alignment: .trailing) {
+            // Like/Dislike buttons
+            VStack(spacing: 16) {
+                Button(action: {
+                    viewModel.handleLike(for: video)
+                    scheduleOverlayHide()
+                }) {
+                    VStack {
+                        Image(systemName: "hand.thumbsup.fill")
+                            .font(.system(size: 30))
+                            .foregroundColor(viewModel.isLiked ? .blue : .white.opacity(0.8))
+                        Text("\(viewModel.currentLikeCount)")
+                            .font(.caption)
+                    }
+                }
+                
+                Button(action: {
+                    viewModel.handleDislike(for: video)
+                    scheduleOverlayHide()
+                }) {
+                    VStack {
+                        Image(systemName: "hand.thumbsdown.fill")
+                            .font(.system(size: 30))
+                            .foregroundColor(viewModel.isDisliked ? .red : .white.opacity(0.8))
+                        Text("\(viewModel.currentDislikeCount)")
+                            .font(.caption)
+                    }
+                }
+            }
+            .padding(.trailing, 20)
+            .padding(.top, 100)
+        }
+        .opacity(isVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.2), value: isVisible)
+        .onAppear {
+            // Initialize isPlaying based on player's current state AND set it to true since we auto-play on appear
+            isPlaying = true
+            
+            // Observe player's time control status changes
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemTimeJumped,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                isPlaying = player.rate != 0 || player.timeControlStatus == .playing
+            }
+            
+            // Also observe rate changes
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemPlaybackStalled,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                isPlaying = player.rate != 0 || player.timeControlStatus == .playing
+            }
+            
+            // Add observation for when playback actually starts
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemNewAccessLogEntry,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                isPlaying = player.rate != 0 || player.timeControlStatus == .playing
+            }
+            
+            scheduleOverlayHide()
+        }
+    }
+    
+    private func scheduleOverlayHide() {
+        // Cancel any existing hide task
+        hideTask?.cancel()
+        
+        // Create a new hide task
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+            if !Task.isCancelled {
+                await MainActor.run {
+                    isVisible = false
+                }
+            }
+        }
+    }
+}
+
+// Update VideoVerticalPlayer
 struct VideoVerticalPlayer: View {
     let video: Video
     let index: Int
     @StateObject private var playerWrapper = PlayerWrapper()
     let size: CGSize
     @StateObject private var handler = VerticalVideoHandler.shared
+    @State private var isOverlayVisible = false
 
     // Helper class to wrap the AVPlayer and make it Observable
     class PlayerWrapper: ObservableObject {
@@ -671,6 +902,18 @@ struct VideoVerticalPlayer: View {
                             Log.p(Log.video, Log.event, "🟢 Player is ready on appearance for video: [\(index)] \(video.id)")
                         }
                     }
+                    .overlay {
+                        if let player = playerWrapper.player {
+                            VideoOverlay(
+                                video: video,
+                                player: player,
+                                isVisible: $isOverlayVisible
+                            )
+                        }
+                    }
+                    .onTapGesture {
+                        isOverlayVisible.toggle()
+                    }
             } else {
                 // Placeholder while video loads
                 ZStack {
@@ -691,15 +934,6 @@ struct VideoVerticalPlayer: View {
                     Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player is nil for video: [\(index)] \(video.id)")
                 }
             }
-
-            // Overlay controls and UI elements
-            VStack {
-                // Top controls (if any)
-                Spacer()
-                // Bottom controls (if any)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .layoutPriority(0)
         }
         .frame(width: size.width, height: size.height)
         .clipped() // Ensure content doesn't overflow
