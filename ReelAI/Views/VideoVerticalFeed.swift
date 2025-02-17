@@ -630,15 +630,89 @@ struct VideoVerticalFeed: View {
     }
 }
 
-// Add VideoOverlay view
-struct VideoOverlay: View {
-    let video: Video
-    let player: AVPlayer
-    @Binding var isVisible: Bool
+// Add VideoOverlay view model
+@MainActor
+public class VideoOverlayViewModel: ObservableObject {
+    @Published public var isLiked: Bool = false
+    @Published public var isDisliked: Bool = false
+    @Published private(set) var currentLikeCount: Int
+    @Published private(set) var currentDislikeCount: Int
+    private var cancellables = Set<AnyCancellable>()
+    
+    public init(video: Video) {
+        self.currentLikeCount = video.engagement.likeCount
+        self.currentDislikeCount = video.engagement.dislikeCount
+    }
+    
+    public func handleLike(for video: Video) {
+        if isLiked {
+            // Unlike
+            isLiked = false
+            currentLikeCount -= 1
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: true, increment: false)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        } else {
+            // Like
+            isLiked = true
+            currentLikeCount += 1
+            if isDisliked {
+                isDisliked = false
+                currentDislikeCount -= 1
+                // Remove dislike first
+                FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: false, increment: false)
+                    .sink(receiveCompletion: { _ in }, receiveValue: { })
+                    .store(in: &cancellables)
+            }
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: true, increment: true)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        }
+    }
+    
+    public func handleDislike(for video: Video) {
+        if isDisliked {
+            // Remove dislike
+            isDisliked = false
+            currentDislikeCount -= 1
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: false, increment: false)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        } else {
+            // Dislike
+            isDisliked = true
+            currentDislikeCount += 1
+            if isLiked {
+                isLiked = false
+                currentLikeCount -= 1
+                // Remove like first
+                FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: true, increment: false)
+                    .sink(receiveCompletion: { _ in }, receiveValue: { })
+                    .store(in: &cancellables)
+            }
+            FirestoreService.shared.updateVideoLike(videoId: video.id, isLike: false, increment: true)
+                .sink(receiveCompletion: { _ in }, receiveValue: { })
+                .store(in: &cancellables)
+        }
+    }
+}
+
+public struct VideoOverlay: View {
+    private let video: Video
+    private let player: AVPlayer
+    @Binding private var isVisible: Bool
     @State private var hideTask: Task<Void, Never>?
     @State private var isPlaying: Bool = true
+    @StateObject private var viewModel: VideoOverlayViewModel
     
-    var body: some View {
+    public init(video: Video, player: AVPlayer, isVisible: Binding<Bool>) {
+        self.video = video
+        self.player = player
+        self._isVisible = isVisible
+        self._viewModel = StateObject(wrappedValue: VideoOverlayViewModel(video: video))
+    }
+    
+    public var body: some View {
         VStack {
             // Add extra top padding
             Color.clear.frame(height: 50)
@@ -667,7 +741,7 @@ struct VideoOverlay: View {
                     // Engagement stats
                     HStack(spacing: 16) {
                         Label("\(video.engagement.viewCount)", systemImage: "eye.fill")
-                        Label("\(video.engagement.likeCount)", systemImage: "hand.thumbsup.fill")
+                        Label("\(viewModel.currentLikeCount)", systemImage: "hand.thumbsup.fill")
                     }
                     .font(.subheadline)
                     .foregroundColor(.white.opacity(0.8))
@@ -704,30 +778,30 @@ struct VideoOverlay: View {
             // Like/Dislike buttons
             VStack(spacing: 16) {
                 Button(action: {
-                    // TODO: Implement like functionality
+                    viewModel.handleLike(for: video)
                     scheduleOverlayHide()
                 }) {
                     VStack {
                         Image(systemName: "hand.thumbsup.fill")
                             .font(.system(size: 30))
-                        Text("\(video.engagement.likeCount)")
+                            .foregroundColor(viewModel.isLiked ? .blue : .white.opacity(0.8))
+                        Text("\(viewModel.currentLikeCount)")
                             .font(.caption)
                     }
                 }
-                .foregroundColor(.white.opacity(0.8))
                 
                 Button(action: {
-                    // TODO: Implement dislike functionality
+                    viewModel.handleDislike(for: video)
                     scheduleOverlayHide()
                 }) {
                     VStack {
                         Image(systemName: "hand.thumbsdown.fill")
                             .font(.system(size: 30))
-                        Text("\(video.engagement.dislikeCount)")
+                            .foregroundColor(viewModel.isDisliked ? .red : .white.opacity(0.8))
+                        Text("\(viewModel.currentDislikeCount)")
                             .font(.caption)
                     }
                 }
-                .foregroundColor(.white.opacity(0.8))
             }
             .padding(.trailing, 20)
             .padding(.top, 100)
