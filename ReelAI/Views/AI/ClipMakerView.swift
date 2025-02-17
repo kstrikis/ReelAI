@@ -4,6 +4,24 @@ import FirebaseAuth
 import AVFoundation
 import AVKit
 
+public struct Clip: Identifiable, Hashable {
+    public let id: String
+    public let sceneId: String
+    public let displayName: String
+    public let status: String
+    public let aimlapiUrl: String?
+    public let mediaUrl: String?
+    public let createdAt: Date
+    
+    public static func == (lhs: Clip, rhs: Clip) -> Bool {
+        lhs.id == rhs.id
+    }
+    
+    public func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+}
+
 struct ClipMakerView: View {
     let stories: [Story]
     @State private var selectedStory: Story?
@@ -170,24 +188,6 @@ private struct SceneListView: View {
             Log.p(Log.video, Log.event, Log.error, "Failed to recheck videos: \(error.localizedDescription)")
         }
         isRechecking = false
-    }
-}
-
-private struct Clip: Identifiable, Hashable {
-    let id: String
-    let sceneId: String
-    let displayName: String
-    let status: String
-    let aimlapiUrl: String?
-    let mediaUrl: String?
-    let createdAt: Date
-    
-    static func == (lhs: Clip, rhs: Clip) -> Bool {
-        lhs.id == rhs.id
-    }
-    
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
     }
 }
 
