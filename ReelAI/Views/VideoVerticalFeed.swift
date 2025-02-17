@@ -630,12 +630,169 @@ struct VideoVerticalFeed: View {
     }
 }
 
+// Add VideoOverlay view
+struct VideoOverlay: View {
+    let video: Video
+    let player: AVPlayer
+    @Binding var isVisible: Bool
+    @State private var hideTask: Task<Void, Never>?
+    @State private var isPlaying: Bool = true
+    
+    var body: some View {
+        VStack {
+            // Add extra top padding
+            Color.clear.frame(height: 50)
+            
+            // Video info moved to top
+            VStack(alignment: .leading, spacing: 8) {
+                Text(video.title)
+                    .font(.title3)
+                    .bold()
+                    .foregroundColor(.white)
+                
+                if let description = video.description {
+                    Text(description)
+                        .font(.body)
+                        .foregroundColor(.white.opacity(0.9))
+                        .lineLimit(3)
+                }
+                
+                HStack {
+                    Text(video.username)
+                        .font(.subheadline)
+                        .foregroundColor(.white.opacity(0.8))
+                    
+                    Spacer()
+                    
+                    // Engagement stats
+                    HStack(spacing: 16) {
+                        Label("\(video.engagement.viewCount)", systemImage: "eye.fill")
+                        Label("\(video.engagement.likeCount)", systemImage: "hand.thumbsup.fill")
+                    }
+                    .font(.subheadline)
+                    .foregroundColor(.white.opacity(0.8))
+                }
+            }
+            .padding()
+            .background(
+                LinearGradient(
+                    gradient: Gradient(colors: [.black.opacity(0.7), .clear]),
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
+            
+            Spacer()
+        }
+        .overlay(alignment: .center) {
+            // Play/Pause button
+            Button(action: {
+                if isPlaying {
+                    player.pause()
+                } else {
+                    player.play()
+                }
+                isPlaying.toggle()
+                scheduleOverlayHide()
+            }) {
+                Image(systemName: isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 60))
+                    .foregroundColor(.white.opacity(0.8))
+            }
+        }
+        .overlay(alignment: .trailing) {
+            // Like/Dislike buttons
+            VStack(spacing: 16) {
+                Button(action: {
+                    // TODO: Implement like functionality
+                    scheduleOverlayHide()
+                }) {
+                    VStack {
+                        Image(systemName: "hand.thumbsup.fill")
+                            .font(.system(size: 30))
+                        Text("\(video.engagement.likeCount)")
+                            .font(.caption)
+                    }
+                }
+                .foregroundColor(.white.opacity(0.8))
+                
+                Button(action: {
+                    // TODO: Implement dislike functionality
+                    scheduleOverlayHide()
+                }) {
+                    VStack {
+                        Image(systemName: "hand.thumbsdown.fill")
+                            .font(.system(size: 30))
+                        Text("\(video.engagement.dislikeCount)")
+                            .font(.caption)
+                    }
+                }
+                .foregroundColor(.white.opacity(0.8))
+            }
+            .padding(.trailing, 20)
+            .padding(.top, 100)
+        }
+        .opacity(isVisible ? 1 : 0)
+        .animation(.easeInOut(duration: 0.2), value: isVisible)
+        .onAppear {
+            // Initialize isPlaying based on player's current state AND set it to true since we auto-play on appear
+            isPlaying = true
+            
+            // Observe player's time control status changes
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemTimeJumped,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                isPlaying = player.rate != 0 || player.timeControlStatus == .playing
+            }
+            
+            // Also observe rate changes
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemPlaybackStalled,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                isPlaying = player.rate != 0 || player.timeControlStatus == .playing
+            }
+            
+            // Add observation for when playback actually starts
+            NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemNewAccessLogEntry,
+                object: player.currentItem,
+                queue: .main
+            ) { _ in
+                isPlaying = player.rate != 0 || player.timeControlStatus == .playing
+            }
+            
+            scheduleOverlayHide()
+        }
+    }
+    
+    private func scheduleOverlayHide() {
+        // Cancel any existing hide task
+        hideTask?.cancel()
+        
+        // Create a new hide task
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000) // 3 seconds
+            if !Task.isCancelled {
+                await MainActor.run {
+                    isVisible = false
+                }
+            }
+        }
+    }
+}
+
+// Update VideoVerticalPlayer
 struct VideoVerticalPlayer: View {
     let video: Video
     let index: Int
     @StateObject private var playerWrapper = PlayerWrapper()
     let size: CGSize
     @StateObject private var handler = VerticalVideoHandler.shared
+    @State private var isOverlayVisible = false
 
     // Helper class to wrap the AVPlayer and make it Observable
     class PlayerWrapper: ObservableObject {
@@ -671,6 +828,18 @@ struct VideoVerticalPlayer: View {
                             Log.p(Log.video, Log.event, "🟢 Player is ready on appearance for video: [\(index)] \(video.id)")
                         }
                     }
+                    .overlay {
+                        if let player = playerWrapper.player {
+                            VideoOverlay(
+                                video: video,
+                                player: player,
+                                isVisible: $isOverlayVisible
+                            )
+                        }
+                    }
+                    .onTapGesture {
+                        isOverlayVisible.toggle()
+                    }
             } else {
                 // Placeholder while video loads
                 ZStack {
@@ -691,15 +860,6 @@ struct VideoVerticalPlayer: View {
                     Log.p(Log.video, Log.event, Log.error, "⚫️ BLACK SCREEN DETECTED: Player is nil for video: [\(index)] \(video.id)")
                 }
             }
-
-            // Overlay controls and UI elements
-            VStack {
-                // Top controls (if any)
-                Spacer()
-                // Bottom controls (if any)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .layoutPriority(0)
         }
         .frame(width: size.width, height: size.height)
         .clipped() // Ensure content doesn't overflow
