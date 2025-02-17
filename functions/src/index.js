@@ -18,6 +18,7 @@ import { unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { getFirestore, FieldValue } from "firebase-admin/firestore";
+import * as fs from "fs";
 
 // Initialize Firebase Admin
 initializeApp();
@@ -1885,6 +1886,355 @@ export const recheckVideo = functions.https.onCall(async (request) => {
 
   } catch (error) {
     console.error("Video recheck error:", error);
+    throw new HttpsError(
+      "internal",
+      error instanceof Error ? error.message : "Unknown error occurred"
+    );
+  }
+});
+
+// Add the assembleVideo function
+export const assembleVideo = functions.https.onCall({
+  memory: "1GiB",
+  timeoutSeconds: 540,
+  region: "us-central1"
+}, async (request) => {
+  const auth = request.auth;
+  if (!auth) {
+    throw new HttpsError(
+      "unauthenticated",
+      "Must be signed in to assemble videos"
+    );
+  }
+
+  const { storyId, clips } = request.data;
+  if (!storyId || !clips || !Array.isArray(clips)) {
+    throw new HttpsError(
+      "invalid-argument",
+      "Must provide storyId and clips array"
+    );
+  }
+
+  try {
+    // Get the story document
+    const storyRef = db.collection("users")
+      .doc(auth.uid)
+      .collection("stories")
+      .doc(storyId);
+
+    const storyDoc = await storyRef.get();
+    if (!storyDoc.exists) {
+      throw new HttpsError(
+        "not-found",
+        "Story document not found"
+      );
+    }
+
+    const story = storyDoc.data();
+    if (story.userId !== auth.uid) {
+      throw new HttpsError(
+        "permission-denied",
+        "You don't have permission to modify this story"
+      );
+    }
+
+    // Create a new assembly document
+    const assemblyId = `assembly_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const assemblyRef = storyRef.collection("assemblies").doc(assemblyId);
+
+    const dateFormatter = new Intl.DateTimeFormat("en-US", {
+      dateStyle: "short",
+      timeStyle: "short"
+    });
+    const timestamp = dateFormatter.format(new Date());
+
+    // Initial assembly document
+    await assemblyRef.set({
+      id: assemblyId,
+      storyId,
+      userId: auth.uid,
+      displayName: `Assembly (${timestamp})`,
+      mediaUrl: null,
+      createdAt: FieldValue.serverTimestamp(),
+      status: "assembling"
+    });
+
+    // Create temporary directory for processing
+    const tempDir = join(tmpdir(), assemblyId);
+    await fs.promises.mkdir(tempDir, { recursive: true });
+
+    try {
+      // Download all videos
+      const videoFiles = [];
+      let totalDuration = 0;
+      for (const clip of clips) {
+        const { sceneId, videoUrl, duration } = clip;
+        if (!videoUrl) continue;
+
+        const videoPath = join(tempDir, `${sceneId}.mp4`);
+        const videoResponse = await fetch(videoUrl);
+        if (!videoResponse.ok) {
+          throw new Error(`Failed to download video: ${videoResponse.statusText}`);
+        }
+
+        const videoStream = createWriteStream(videoPath);
+        await new Promise((resolve, reject) => {
+          videoResponse.body.pipe(videoStream)
+            .on("finish", resolve)
+            .on("error", reject);
+        });
+
+        // Get actual video duration using ffprobe
+        const actualDuration = await new Promise((resolve) => {
+          ffmpeg.ffprobe(videoPath, (err, metadata) => {
+            if (err) resolve(duration || 10); // Fallback to provided duration or 10 seconds
+            resolve(metadata.format.duration);
+          });
+        });
+
+        videoFiles.push({
+          path: videoPath,
+          sceneId,
+          startTime: totalDuration,
+          duration: actualDuration
+        });
+        totalDuration += actualDuration;
+      }
+
+      // Sort videos by scene number
+      videoFiles.sort((a, b) => {
+        const aNum = parseInt(a.sceneId.replace("scene", ""));
+        const bNum = parseInt(b.sceneId.replace("scene", ""));
+        return aNum - bNum;
+      });
+
+      // Create a list file for ffmpeg
+      const listPath = join(tempDir, "list.txt");
+      const listContent = videoFiles.map(f => `file '${f.path}'`).join("\n");
+      await fs.promises.writeFile(listPath, listContent);
+
+      // First concatenate all videos
+      const concatenatedPath = join(tempDir, "concatenated.mp4");
+      await new Promise((resolve, reject) => {
+        ffmpeg()
+          .input(listPath)
+          .inputOptions(["-f", "concat", "-safe", "0"])
+          .output(concatenatedPath)
+          .on("end", resolve)
+          .on("error", reject)
+          .run();
+      });
+
+      // Create a timing map for each scene
+      const sceneTimings = {};
+      for (const file of videoFiles) {
+        sceneTimings[file.sceneId] = {
+          startTime: file.startTime,
+          duration: file.duration
+        };
+      }
+
+      // Prepare audio files with their timing information
+      let filterComplex = [];
+      let inputCount = 1; // Start at 1 because video is input 0
+      let audioMixInputs = [];
+      let audioInputs = []; // Track our inputs in order
+
+      console.log("Starting audio assembly with clips:", clips.map(c => ({
+        sceneId: c.sceneId,
+        hasBGM: !!request.data.backgroundMusicUrl,
+        hasNarration: !!c.audioUrl,
+        hasSFX: !!c.soundEffectUrl,
+        startTime: sceneTimings[c.sceneId]?.startTime,
+        duration: sceneTimings[c.sceneId]?.duration
+      })));
+
+      // Add background music if provided
+      if (request.data.backgroundMusicUrl) {
+        const bgmPath = join(tempDir, "bgm.mp3");
+        const bgmResponse = await fetch(request.data.backgroundMusicUrl);
+        if (!bgmResponse.ok) {
+          throw new Error(`Failed to download BGM: ${bgmResponse.statusText}`);
+        }
+        const bgmStream = createWriteStream(bgmPath);
+        await new Promise((resolve, reject) => {
+          bgmResponse.body.pipe(bgmStream)
+            .on("finish", resolve)
+            .on("error", reject);
+        });
+
+        // Add BGM with volume adjustment and duration trim
+        filterComplex.push(`[${inputCount}:a]volume=0.3,atrim=0:${totalDuration}[bgm]`);
+        audioMixInputs.push("[bgm]");
+        audioInputs.push({ type: "bgm", path: bgmPath });
+        inputCount++;
+      }
+
+      // Process narrations and sound effects
+      for (const clip of clips) {
+        const timing = sceneTimings[clip.sceneId];
+        if (!timing) continue;
+
+        const { audioUrl, soundEffectUrl } = clip;
+        const { startTime, duration } = timing;
+        
+        // Add narration
+        if (audioUrl) {
+          const narrationPath = join(tempDir, `narration_${clip.sceneId}.mp3`);
+          const narrationResponse = await fetch(audioUrl);
+          if (!narrationResponse.ok) {
+            throw new Error(`Failed to download narration: ${narrationResponse.statusText}`);
+          }
+          const narrationStream = createWriteStream(narrationPath);
+          await new Promise((resolve, reject) => {
+            narrationResponse.body.pipe(narrationStream)
+              .on("finish", resolve)
+              .on("error", reject);
+          });
+
+          // Add narration with delay, volume, and duration trim
+          const delayMs = Math.round(startTime * 1000);
+          filterComplex.push(`[${inputCount}:a]adelay=${delayMs}|${delayMs},volume=1,atrim=0:${totalDuration}[narr${clip.sceneId}]`);
+          audioMixInputs.push(`[narr${clip.sceneId}]`);
+          audioInputs.push({ type: "narration", path: narrationPath });
+          inputCount++;
+        }
+
+        // Add sound effect
+        if (soundEffectUrl) {
+          const sfxPath = join(tempDir, `sfx_${clip.sceneId}.mp3`);
+          const sfxResponse = await fetch(soundEffectUrl);
+          if (!sfxResponse.ok) {
+            throw new Error(`Failed to download SFX: ${sfxResponse.statusText}`);
+          }
+          const sfxStream = createWriteStream(sfxPath);
+          await new Promise((resolve, reject) => {
+            sfxResponse.body.pipe(sfxStream)
+              .on("finish", resolve)
+              .on("error", reject);
+          });
+
+          // Get SFX duration to calculate start time
+          const sfxDuration = await new Promise((resolve) => {
+            ffmpeg.ffprobe(sfxPath, (err, metadata) => {
+              if (err) resolve(5); // Default to 5 seconds if can't determine
+              resolve(metadata.format.duration);
+            });
+          });
+
+          // Calculate start time to align end with clip end
+          const sfxStartTime = Math.max(0, startTime + (duration - sfxDuration));
+          const delayMs = Math.round(sfxStartTime * 1000);
+          filterComplex.push(`[${inputCount}:a]adelay=${delayMs}|${delayMs},volume=0.7,atrim=0:${totalDuration}[sfx${clip.sceneId}]`);
+          audioMixInputs.push(`[sfx${clip.sceneId}]`);
+          audioInputs.push({ type: "sfx", path: sfxPath });
+          inputCount++;
+        }
+      }
+
+      // Final mix of all audio streams
+      if (audioMixInputs.length > 0) {
+        // Mix all audio streams with normalized volumes
+        filterComplex.push(`${audioMixInputs.join("")}amix=inputs=${audioMixInputs.length}:duration=longest:normalize=0[aout]`);
+      }
+
+      console.log("Audio assembly configuration:", {
+        totalInputs: inputCount,
+        filterComplex,
+        audioMixInputs,
+        audioInputPaths: audioInputs.map(a => ({ type: a.type, path: a.path }))
+      });
+
+      // Combine video with mixed audio
+      const outputPath = join(tempDir, "output.mp4");
+      const ffmpegCommand = ffmpeg(concatenatedPath);
+
+      // Add all audio inputs in the exact order we used in filter complex
+      for (const audioInput of audioInputs) {
+        ffmpegCommand.input(audioInput.path);
+      }
+
+      // Apply filter complex and output
+      if (audioMixInputs.length > 0) {
+        await new Promise((resolve, reject) => {
+          ffmpegCommand
+            .complexFilter(filterComplex)
+            .outputOptions([
+              "-map", "0:v", // Map video from first input
+              "-map", "[aout]", // Map mixed audio
+              "-c:v", "copy", // Copy video codec
+              "-c:a", "aac", // Use AAC for audio
+              "-b:a", "192k" // Set audio bitrate
+            ])
+            .output(outputPath)
+            .on("start", cmdline => {
+              console.log("FFmpeg command:", cmdline);
+            })
+            .on("end", resolve)
+            .on("error", (err) => {
+              console.error("FFmpeg error:", err.message);
+              reject(err);
+            })
+            .run();
+        });
+      } else {
+        // If no audio, just copy the video
+        await new Promise((resolve, reject) => {
+          ffmpegCommand
+            .output(outputPath)
+            .on("end", resolve)
+            .on("error", (err) => {
+              console.error("FFmpeg error:", err.message);
+              reject(err);
+            })
+            .run();
+        });
+      }
+
+      // Upload to Firebase Storage
+      const storage = getStorage();
+      const storagePath = `users/${auth.uid}/stories/${storyId}/assemblies/${assemblyId}.mp4`;
+      const bucket = storage.bucket();
+      const file = bucket.file(storagePath);
+
+      await bucket.upload(outputPath, {
+        destination: storagePath,
+        metadata: {
+          contentType: "video/mp4"
+        }
+      });
+
+      // Make the file public
+      await file.makePublic();
+      const url = `https://storage.googleapis.com/${bucket.name}/${storagePath}`;
+
+      // Update the assembly document
+      await assemblyRef.update({
+        mediaUrl: url,
+        status: "completed",
+        updatedAt: FieldValue.serverTimestamp()
+      });
+
+      // Clean up temporary files
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+
+      return {
+        success: true,
+        result: {
+          id: assemblyId,
+          mediaUrl: url,
+          status: "completed"
+        }
+      };
+
+    } catch (error) {
+      // Clean up temporary files on error
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+      throw error;
+    }
+
+  } catch (error) {
+    console.error("Video assembly error:", error);
     throw new HttpsError(
       "internal",
       error instanceof Error ? error.message : "Unknown error occurred"
