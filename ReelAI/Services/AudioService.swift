@@ -237,8 +237,12 @@ class AudioService: ObservableObject {
                     Log.error(Log.audio_music, error, "Failed to load audio")
                 }
             } receiveValue: { [weak self] audios in
-                self?.currentAudio = audios
-                Log.p(Log.audio_music, Log.read, Log.success, "Updated currentAudio with \(audios.count) items")
+                guard let self = self else { return }
+                // Remove any existing audio for this story
+                self.currentAudio.removeAll { $0.storyId == storyId }
+                // Add the new audio items
+                self.currentAudio.append(contentsOf: audios)
+                Log.p(Log.audio_music, Log.read, Log.success, "Updated currentAudio with \(audios.count) items for story \(storyId)")
             }
             .store(in: &cancellables)
     }

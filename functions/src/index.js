@@ -1072,6 +1072,16 @@ export const recheckAudio = functions.https.onCall(async (request) => {
       checkedCount++;
 
       if (audioData.type === "backgroundMusic") {
+        // First check if we already have a mediaUrl
+        if (audioData.mediaUrl) {
+          // If we have a mediaUrl, just mark as completed and continue to next file
+          await doc.ref.update({
+            status: "completed"
+          });
+          updatedCount++;
+          continue;
+        }
+
         // Case 1: Has generationId but no aimlapiUrl - needs to check AIMLAPI status
         if (audioData.generationId && !audioData.aimlapiUrl) {
           try {

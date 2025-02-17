@@ -593,6 +593,8 @@ private struct ClipPickerContent: View {
         .tint(.white)
         .background(Color.white.opacity(0.2))
         .cornerRadius(8)
+        .scaleEffect(0.9)
+        .frame(height: 32)
     }
 }
 
@@ -601,6 +603,7 @@ private struct ClipPickerRow: View {
     
     var body: some View {
         Text(clip.displayName)
+            .font(.subheadline)
             .foregroundColor(clip.status == "completed" ? .white :
                            clip.status == "failed" ? .red :
                            .white.opacity(0.5))
